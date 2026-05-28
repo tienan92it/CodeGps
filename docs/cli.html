@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI — CodeGps</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b25a3c' d='M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="shell">
+  <header class="site-header">
+    <a class="brand" href="./">
+      <svg class="brand-mark" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z"/></svg>
+      codegps
+    </a>
+    <nav class="site-nav">
+      <a href="./">overview</a>
+      <a href="getting-started.html">start</a>
+      <a href="architecture.html">architecture</a>
+      <a class="active" href="cli.html">cli</a>
+      <a href="mcp.html">mcp</a>
+      <a href="configuration.html">config</a>
+      <a href="https://github.com/tienan92it/CodeGps">github →</a>
+    </nav>
+  </header>
+
+  <h1>CLI reference</h1>
+  <p class="lede">Every command takes an optional <code>[path]</code> argument (defaults to <code>.</code>). Most accept additional flags listed below.</p>
+
+  <div class="toc">
+    <h4>commands</h4>
+    <ul>
+      <li><a href="#init">init</a> · <a href="#sync">sync</a> · <a href="#ingest">ingest</a> · <a href="#status">status</a></li>
+      <li><a href="#serve">serve</a> · <a href="#canvas">canvas</a> · <a href="#link">link</a> · <a href="#verify">verify</a></li>
+      <li><a href="#triage">triage audit</a> · <a href="#agents">agents (list / eval / run)</a></li>
+    </ul>
+  </div>
+
+  <h2 id="init">init</h2>
+  <pre><code>codegps init [path]</code></pre>
+  <p>Creates <code>&lt;path&gt;/.codegps/</code> with empty <code>code.db</code>, <code>knowledge.db</code>, and a stub <code>config.json</code>. Registers the project in <code>~/.codegps/global.db</code>.</p>
+
+  <h2 id="sync">sync</h2>
+  <pre><code>codegps sync [path] [--full]</code></pre>
+  <p>Re-indexes the L0 code graph.</p>
+  <table>
+    <tr><th>Flag</th><th>Effect</th></tr>
+    <tr><td><code>--full</code></td><td>Ignore content hashes and re-parse every file.</td></tr>
+  </table>
+  <p>Output:</p>
+  <pre><code>L0 sync complete: 142 files, 2041 nodes, 3177 edges</code></pre>
+
+  <h2 id="ingest">ingest</h2>
+  <pre><code>codegps ingest [path] [--agent &lt;id&gt;] [--no-triage] [--no-extract]</code></pre>
+  <p>Pulls new conversation data and runs the agent pipeline.</p>
+  <table>
+    <tr><th>Flag</th><th>Effect</th></tr>
+    <tr><td><code>--agent cursor|claude-code|codex|copilot</code></td><td>Limit to one adapter.</td></tr>
+    <tr><td><code>--no-triage</code></td><td>Skip the Triage Agent — useful when the LLM is offline.</td></tr>
+    <tr><td><code>--no-extract</code></td><td>Skip extractor agents — populate L1/L1.5 only.</td></tr>
+  </table>
+  <p>Output:</p>
+  <pre><code>Ingest complete:
+  Sessions seen:    24 (new: 3)
+  Turns ingested:   58
+  Windows created:  19
+  Triaged:          19 (kept 14, dropped 5)
+  Facts produced:   31
+  Concepts:         6 created, 14 attached</code></pre>
+
+  <h2 id="status">status</h2>
+  <pre><code>codegps status [path]</code></pre>
+  <p>Counts per layer. Cheap, read-only.</p>
+
+  <h2 id="serve">serve</h2>
+  <pre><code>codegps serve [path] --mcp</code></pre>
+  <p>Runs the MCP server over stdio. See <a href="mcp.html">MCP integration</a> for client wiring and the tool catalogue.</p>
+
+  <h2 id="canvas">canvas</h2>
+  <pre><code>codegps canvas &lt;kind&gt; [path]</code></pre>
+  <p>Generates a self-contained <code>.canvas.tsx</code> under <code>.codegps/canvas/</code>.</p>
+  <table>
+    <tr><th>Kind</th><th>Purpose</th></tr>
+    <tr><td><code>triage-audit</code></td><td>Every triaged window with labels and rationale; filter by kept/dropped/domain.</td></tr>
+    <tr><td><code>project-map</code></td><td>L3 concepts grouped with member facts and L0 code links.</td></tr>
+    <tr><td><code>decision-timeline</code></td><td>Chronological view of decisions, business rules, problems / solutions.</td></tr>
+    <tr><td><code>business-logic</code></td><td>Domain rules and entities, grouped by concept.</td></tr>
+    <tr><td><code>cross-project-bridge</code></td><td>Shared concepts across two or more registered projects.</td></tr>
+  </table>
+
+  <h2 id="link">link</h2>
+  <pre><code>codegps link [path] [--rebuild]</code></pre>
+  <p>Rebuilds the L4 cross-project graph: exports this project's concepts to <code>~/.codegps/global.db</code>, runs mechanical matching, then the Linker Agent.</p>
+  <table>
+    <tr><th>Flag</th><th>Effect</th></tr>
+    <tr><td><code>--rebuild</code></td><td>Wipe <code>concept_links</code> first; re-compute from scratch.</td></tr>
+  </table>
+
+  <h2 id="verify">verify</h2>
+  <pre><code>codegps verify [path] [--prune-below &lt;n&gt;] [--max-pairs &lt;n&gt;] [--invalidate-triage-days &lt;n&gt;]</code></pre>
+  <p>Runs the Verifier sweep:</p>
+  <ol>
+    <li>Prune orphan facts whose confidence falls below the threshold (default <code>0.25</code>).</li>
+    <li>For each cluster with multiple same-kind facts, pairwise verify (cap per cluster).</li>
+    <li>Optionally invalidate triage cache entries older than N days so the next ingest re-triages them.</li>
+  </ol>
+
+  <h2 id="triage">triage audit</h2>
+  <pre><code>codegps triage audit [path] [--dropped] [--limit &lt;n&gt;]</code></pre>
+  <p>Lists triaged windows with their labels and rationale. Use <code>--dropped</code> to inspect what triage filtered out and decide whether to tune.</p>
+
+  <h2 id="agents">agents</h2>
+  <pre><code>codegps agents list
+codegps agents eval [path] [--agent &lt;name&gt;]
+codegps agents run &lt;name&gt; [path]</code></pre>
+  <p>
+    <code>list</code> shows registered agents and their prompt versions.
+    <code>eval</code> runs every golden fixture under
+    <code>__tests__/agents/&lt;name&gt;/</code> against the configured backend
+    and prints PASS / FAIL.
+    <code>run</code> executes a single agent over its pending input — handy
+    for debugging prompt or schema changes.
+  </p>
+
+  <footer class="site-footer">
+    <span>v0.1.0 · MIT</span>
+    <span><a href="https://github.com/tienan92it/CodeGps">github.com/tienan92it/CodeGps</a></span>
+  </footer>
+</div>
+</body>
+</html>

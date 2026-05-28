@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting started — CodeGps</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b25a3c' d='M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="shell">
+  <header class="site-header">
+    <a class="brand" href="./">
+      <svg class="brand-mark" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z"/></svg>
+      codegps
+    </a>
+    <nav class="site-nav">
+      <a href="./">overview</a>
+      <a class="active" href="getting-started.html">start</a>
+      <a href="architecture.html">architecture</a>
+      <a href="cli.html">cli</a>
+      <a href="mcp.html">mcp</a>
+      <a href="configuration.html">config</a>
+      <a href="https://github.com/tienan92it/CodeGps">github →</a>
+    </nav>
+  </header>
+
+  <h1>Getting started</h1>
+  <p class="lede">Five steps from clone to a knowledge graph populated from your last week of chats.</p>
+
+  <div class="toc">
+    <h4>on this page</h4>
+    <ul>
+      <li><a href="#prereqs">prerequisites</a></li>
+      <li><a href="#install">1. install</a></li>
+      <li><a href="#llm">2. local llm</a></li>
+      <li><a href="#init">3. init a project</a></li>
+      <li><a href="#index">4. index code + ingest conversations</a></li>
+      <li><a href="#inspect">5. inspect the result</a></li>
+      <li><a href="#troubleshooting">troubleshooting</a></li>
+    </ul>
+  </div>
+
+  <h2 id="prereqs">Prerequisites</h2>
+  <ul>
+    <li><strong>Node.js 20+</strong> (24 also supported)</li>
+    <li><strong>Ollama</strong> running locally — <code>https://ollama.com</code></li>
+    <li>One AI agent that writes transcripts somewhere you can read (Cursor, Claude Code, Codex CLI, or VS Code with Copilot)</li>
+  </ul>
+
+  <h2 id="install">1. Install</h2>
+  <pre class="shell"><code>git clone https://github.com/tienan92it/CodeGps
+cd CodeGps
+npm install
+npm run build
+npm link              # exposes `codegps` on $PATH</code></pre>
+  <p>
+    Verify:
+  </p>
+  <pre class="shell"><code>codegps --version     # 0.1.0
+codegps agents list   # 9 chat agents + dedupe</code></pre>
+
+  <h2 id="llm">2. Local LLM</h2>
+  <p>
+    Without a local LLM, only the deterministic syntax pass runs. The agent
+    layers (triage, extractors, clusterer, summarizer, linker, verifier) stay
+    empty. This is intentional — no regex pretends to understand meaning.
+  </p>
+  <p>Pull the default three models:</p>
+  <pre class="shell"><code>ollama pull qwen3:4b-instruct      # classifier — triage, intent, clusterer
+ollama pull qwen2.5:14b            # extractor — decision, business logic, summarizer
+ollama pull qwen3-embedding:0.6b   # embeddings — dedupe, clustering</code></pre>
+  <p class="small">
+    Combined hot footprint: ~12.5 GB. Fits on a 24 GB unified-memory Mac. For
+    smaller machines, see <a href="configuration.html#hardware-budgets">configuration → hardware budgets</a>.
+  </p>
+  <p>Keep them warm between agent calls:</p>
+  <pre class="shell"><code>launchctl setenv OLLAMA_KEEP_ALIVE 30m
+launchctl setenv OLLAMA_MAX_LOADED_MODELS 3
+# restart Ollama after these</code></pre>
+
+  <h2 id="init">3. Init a project</h2>
+  <pre class="shell"><code>cd /path/to/your/project
+codegps init</code></pre>
+  <p>This creates:</p>
+  <pre><code>your-project/.codegps/
+├── code.db          # L0 — code structure
+├── knowledge.db     # L1 → L3 — conversations, facts, concepts
+└── config.json      # per-project agent overrides (empty by default)
+
+~/.codegps/
+├── global.db        # L4 — cross-project registry
+└── config.json      # global defaults</code></pre>
+
+  <h2 id="index">4. Index code + ingest conversations</h2>
+  <p><strong>L0 — code structure</strong></p>
+  <pre class="shell"><code>codegps sync</code></pre>
+  <p>
+    Walks the project honoring <code>.gitignore</code>, parses every supported
+    file with tree-sitter (or the SQL DDL regex parser), writes symbols + edges
+    to <code>code.db</code>. Incremental by content hash — re-running only
+    re-parses changed files.
+  </p>
+
+  <p><strong>L1 → L3 — conversations through concepts</strong></p>
+  <pre class="shell"><code>codegps ingest</code></pre>
+  <p>This runs the full pipeline:</p>
+  <ol>
+    <li><em>Discover</em> sessions from every configured adapter (Cursor / Claude Code / Codex / Copilot)</li>
+    <li><em>Read</em> new turns incrementally (per-session byte offset)</li>
+    <li><em>Segment</em> each session into windows on user-turn boundaries</li>
+    <li><em>Syntax pass</em> on each window (paths, code blocks, shell commands, URLs, ticket IDs)</li>
+    <li><em>Triage</em> each window — drop noise, keep signal</li>
+    <li><em>Dedupe</em> kept windows by embedding similarity</li>
+    <li><em>Extract</em> facts via Decision / BusinessLogic / Intent / ProblemSolution agents (routed by triage domain)</li>
+    <li><em>Cluster</em> each new fact into a concept; <em>Summarize</em> affected concepts</li>
+  </ol>
+
+  <h2 id="inspect">5. Inspect the result</h2>
+  <pre class="shell"><code>codegps status .
+
+# CodeGps status
+#   Project: /your/project
+#   L0 code:
+#     files:   142
+#     nodes:   2,041
+#     edges:   3,177
+#   L1 conversations:
+#     sessions: 24
+#     turns:    487
+#   L1.5 triage:
+#     windows:  93
+#     triaged:  93  (kept=71, dropped=22)
+#   L2 facts:     128
+#   L3 concepts:  31
+#   Agent runs:   254</code></pre>
+
+  <p>Inspect what got dropped vs kept and why:</p>
+  <pre class="shell"><code>codegps triage audit --dropped</code></pre>
+
+  <p>Generate canvases (open in Cursor's canvas pane):</p>
+  <pre class="shell"><code>codegps canvas triage-audit
+codegps canvas project-map
+codegps canvas decision-timeline
+codegps canvas business-logic</code></pre>
+
+  <p>Or query the graph directly:</p>
+  <pre class="shell"><code>sqlite3 .codegps/knowledge.db \
+  "SELECT kind, title FROM k_nodes WHERE kind='decision' ORDER BY confidence DESC LIMIT 10;"</code></pre>
+
+  <h2 id="troubleshooting">Troubleshooting</h2>
+  <table>
+    <tr><th>Symptom</th><th>Cause &amp; fix</th></tr>
+    <tr>
+      <td><code>L0 code: 0 files</code> after sync</td>
+      <td>Project has no files in supported languages. Check <a href="architecture.html#languages">supported languages</a>.</td>
+    </tr>
+    <tr>
+      <td><code>L1 conversations: 0 sessions</code></td>
+      <td>No agent has written transcripts for this project path yet. Run the agent against the project once, then re-ingest.</td>
+    </tr>
+    <tr>
+      <td><code>L3 concepts: 0</code> while facts &gt; 0</td>
+      <td>Embedding model not reachable. Check <code>ollama list</code> and that <code>~/.codegps/config.json</code> points at it.</td>
+    </tr>
+    <tr>
+      <td><code>triage</code> labels everything <code>unknown</code> with confidence 0.1</td>
+      <td>Triage Agent call failed — Ollama down or wrong model name. Check <code>ollama serve</code> and the <code>agent_runs</code> table for the error column.</td>
+    </tr>
+    <tr>
+      <td><code>codegps: command not found</code></td>
+      <td>You skipped <code>npm link</code>. Either run it now, or invoke <code>node dist/cli/index.js</code> directly.</td>
+    </tr>
+  </table>
+
+  <p>
+    Next: <a href="architecture.html">architecture →</a> or
+    <a href="cli.html">cli reference →</a>.
+  </p>
+
+  <footer class="site-footer">
+    <span>v0.1.0 · MIT</span>
+    <span><a href="https://github.com/tienan92it/CodeGps">github.com/tienan92it/CodeGps</a></span>
+  </footer>
+</div>
+</body>
+</html>

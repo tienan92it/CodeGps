@@ -1,0 +1,367 @@
+/* ───────────────────────────────────────────────────────────────
+   CodeGps — documentation styles
+   Minimal, monospace-tinged, calm. Zero JS, OS-driven theme.
+   ─────────────────────────────────────────────────────────────── */
+
+:root {
+  --bg: #f6f5f0;            /* warm white */
+  --ink: #1a1a17;           /* warm near-black */
+  --mute: #6a6a64;          /* subdued text */
+  --rule: #d8d6cc;          /* hairline */
+  --code-bg: #ecebe3;       /* code panel */
+  --accent: #b25a3c;        /* terracotta — compass needle */
+  --accent-soft: #b25a3c30;
+  --max: 760px;
+
+  --font-body: ui-serif, "Iowan Old Style", "Charter", "Georgia", "Times New Roman", serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11110f;
+    --ink: #e8e6dd;
+    --mute: #8b8a82;
+    --rule: #2a2a26;
+    --code-bg: #1c1c19;
+    --accent: #d98461;
+    --accent-soft: #d9846140;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  /* Subtle dot grid — barely there. */
+  background-image: radial-gradient(circle, var(--rule) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-attachment: fixed;
+}
+
+.shell {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 48px 28px 96px;
+}
+
+/* ─── Header ─────────────────────────────────────────────────── */
+
+.site-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 24px;
+  margin-bottom: 48px;
+  border-bottom: 1px solid var(--rule);
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+nav.site-nav {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+nav.site-nav a {
+  color: var(--mute);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  padding-bottom: 2px;
+}
+nav.site-nav a:hover { color: var(--ink); }
+nav.site-nav a.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+/* ─── Typography ─────────────────────────────────────────────── */
+
+h1, h2, h3, h4 {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 2.2em 0 0.6em;
+}
+h1 { font-size: 28px; margin-top: 0; }
+h2 { font-size: 21px; padding-top: 24px; border-top: 1px solid var(--rule); }
+h3 { font-size: 17px; color: var(--ink); }
+h4 { font-size: 15px; color: var(--mute); text-transform: uppercase; letter-spacing: 0.05em; }
+
+h1 + .lede,
+h1 + p.lede {
+  color: var(--mute);
+  font-size: 18px;
+  margin-top: -0.4em;
+  margin-bottom: 2em;
+}
+
+p { margin: 1em 0; }
+
+strong { font-weight: 600; }
+em { font-style: italic; }
+
+a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-soft);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+a:hover { text-decoration-color: var(--accent); }
+
+hr {
+  border: none;
+  height: 1px;
+  background: var(--rule);
+  margin: 3em 0;
+}
+
+/* ─── Code ───────────────────────────────────────────────────── */
+
+code, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+p code, li code, td code, h3 code, h4 code {
+  background: var(--code-bg);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.55;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--accent);
+  border-radius: 3px;
+  padding: 14px 18px;
+  overflow-x: auto;
+  margin: 1.4em 0;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* shell-prompt prefix decoration when class is set */
+pre.shell code::before { content: ""; }
+
+/* ─── Lists ──────────────────────────────────────────────────── */
+
+ul, ol { padding-left: 1.4em; }
+li { margin: 0.35em 0; }
+
+/* ─── Tables ─────────────────────────────────────────────────── */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.6em 0;
+  font-size: 0.94em;
+}
+th, td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.85em;
+  color: var(--mute);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--ink);
+}
+tr:hover td { background: var(--code-bg); }
+
+/* ─── Blockquotes ────────────────────────────────────────────── */
+
+blockquote {
+  margin: 1.6em 0;
+  padding: 8px 18px;
+  border-left: 2px solid var(--accent);
+  color: var(--mute);
+  font-style: italic;
+}
+
+/* ─── Landing-specific ───────────────────────────────────────── */
+
+.hero {
+  margin: 16px 0 48px;
+}
+.hero h1 {
+  font-size: 40px;
+  letter-spacing: -0.02em;
+}
+.hero .tagline {
+  font-family: var(--font-body);
+  font-size: 19px;
+  color: var(--mute);
+  max-width: 580px;
+  margin: 0.6em 0 1.6em;
+}
+.hero-actions {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  margin-top: 24px;
+}
+.hero-actions a {
+  text-decoration: none;
+  padding: 8px 16px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  color: var(--ink);
+}
+.hero-actions a.primary {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.hero-actions a:hover {
+  border-color: var(--accent);
+}
+
+/* layer stack — ASCII-ish */
+.layers {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.7;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 18px 22px;
+  margin: 24px 0;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--mute);
+}
+.layers .lname { color: var(--accent); }
+.layers .ldesc { color: var(--ink); }
+
+/* features grid */
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 28px;
+  margin: 40px 0;
+  font-size: 15px;
+}
+.feature h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--accent);
+}
+.feature p {
+  margin: 0;
+  color: var(--mute);
+}
+
+/* page footer */
+.site-footer {
+  margin-top: 80px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule);
+  color: var(--mute);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.site-footer a { color: var(--mute); }
+.site-footer a:hover { color: var(--ink); }
+
+/* in-page TOC */
+.toc {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  border: 1px solid var(--rule);
+  padding: 14px 18px;
+  border-radius: 3px;
+  margin: 0 0 32px;
+  color: var(--mute);
+}
+.toc h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+}
+.toc ul { padding-left: 16px; margin: 0; }
+.toc a { color: var(--mute); text-decoration: none; }
+.toc a:hover { color: var(--ink); }
+
+/* Mermaid wrapper */
+.mermaid {
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 18px;
+  margin: 1.6em 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-x: auto;
+}
+
+/* small */
+.small { font-size: 0.88em; color: var(--mute); }
+.kbd-like {
+  font-family: var(--font-mono);
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 0.88em;
+}
+
+@media (max-width: 540px) {
+  html { font-size: 16px; }
+  .shell { padding: 32px 18px 64px; }
+  .hero h1 { font-size: 32px; }
+  .site-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+}

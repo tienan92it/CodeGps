@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture — CodeGps</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b25a3c' d='M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z'/%3E%3C/svg%3E">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', fontFamily: 'ui-monospace, SF Mono, monospace' });
+    });
+  </script>
+</head>
+<body>
+<div class="shell">
+  <header class="site-header">
+    <a class="brand" href="./">
+      <svg class="brand-mark" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z"/></svg>
+      codegps
+    </a>
+    <nav class="site-nav">
+      <a href="./">overview</a>
+      <a href="getting-started.html">start</a>
+      <a class="active" href="architecture.html">architecture</a>
+      <a href="cli.html">cli</a>
+      <a href="mcp.html">mcp</a>
+      <a href="configuration.html">config</a>
+      <a href="https://github.com/tienan92it/CodeGps">github →</a>
+    </nav>
+  </header>
+
+  <h1>Architecture</h1>
+  <p class="lede">
+    Six layers, two databases, one runtime contract. Syntax is deterministic.
+    Meaning is agent-driven.
+  </p>
+
+  <div class="toc">
+    <h4>on this page</h4>
+    <ul>
+      <li><a href="#layers">layered model</a></li>
+      <li><a href="#pipeline">pipeline</a></li>
+      <li><a href="#agents">the agent layer</a></li>
+      <li><a href="#runtime">agent runtime</a></li>
+      <li><a href="#storage">storage</a></li>
+      <li><a href="#languages">languages</a></li>
+      <li><a href="#sources">conversation sources</a></li>
+      <li><a href="#tradeoffs">design trade-offs</a></li>
+    </ul>
+  </div>
+
+  <h2 id="layers">Layered model</h2>
+  <p>
+    The layers map loosely onto the DIKW pyramid: raw data at the bottom,
+    derived meaning at the top. Each layer has its own SQLite table family.
+    Edges cross layers explicitly via foreign keys.
+  </p>
+
+  <table>
+    <tr><th>Layer</th><th>Content</th><th>Produced by</th></tr>
+    <tr><td><strong>L0</strong> Code Structure</td><td>symbols, calls, imports, fields</td><td>deterministic (tree-sitter / regex DDL)</td></tr>
+    <tr><td><strong>L1</strong> Conversations</td><td>sessions, turns, tool calls</td><td>deterministic (file parsers)</td></tr>
+    <tr><td><strong>L1.5</strong> Triage</td><td>Relevance / Domain / Quality / Linkage labels</td><td><strong>agent</strong> (Triage)</td></tr>
+    <tr><td><strong>L2</strong> Facts</td><td>decisions, business rules, intents, problems, solutions</td><td><strong>agents</strong> (Decision · BusinessLogic · Intent · ProblemSolution) + syntax pass</td></tr>
+    <tr><td><strong>L3</strong> Concepts</td><td>clustered facts with names + structured summaries</td><td><strong>agents</strong> (Clusterer · Summarizer)</td></tr>
+    <tr><td><strong>L4</strong> Cross-Project</td><td>shared concepts between repos</td><td>mechanical (exact + SimHash) + <strong>agent</strong> (Linker)</td></tr>
+  </table>
+
+  <h2 id="pipeline">Pipeline</h2>
+  <p>
+    Each ingest run pulls new turns, segments them into windows, and routes
+    each window through the deterministic syntax pass and the agent stack.
+    Inputs flow top-down; outputs accumulate as edges back into earlier layers.
+  </p>
+
+  <div class="mermaid">
+flowchart TB
+  raw[L1 raw turns] --&gt; seg[Window Segmenter]
+  seg --&gt; syn[Syntax Pass]
+  seg --&gt; tri[Triage Agent]
+  tri --&gt;|kept| ded[Dedupe Agent]
+  ded --&gt;|novel| route{Route by domain}
+  route --&gt; dec[Decision]
+  route --&gt; biz[BusinessLogic]
+  route --&gt; int[Intent]
+  route --&gt; ps[ProblemSolution]
+  syn --&gt; facts[L2 facts]
+  dec --&gt; facts
+  biz --&gt; facts
+  int --&gt; facts
+  ps --&gt; facts
+  facts --&gt; res[Code Resolver]
+  facts --&gt; clu[Clusterer]
+  clu --&gt; sum[Summarizer]
+  sum --&gt; concepts[L3 concepts]
+  concepts --&gt; link[Linker + mechanical]
+  link --&gt; global[L4 global]
+  facts --&gt; ver[Verifier]
+  </div>
+
+  <p><strong>Deterministic stages</strong></p>
+  <ul>
+    <li><em>Window Segmenter</em> — slices a session into windows on user-turn boundaries with size and time caps.</li>
+    <li><em>Syntax Pass</em> — extracts artifacts that are unambiguous from form: paths, code blocks, shell commands, error messages, stack traces, URLs, ticket IDs.</li>
+    <li><em>Code Resolver</em> — for any mention (syntax or agent), look it up in <code>code.db</code> and write a <code>k_to_code</code> edge.</li>
+  </ul>
+
+  <p><strong>Agent stages</strong></p>
+  <ul>
+    <li><em>Triage</em> — drops noise and labels each window on four axes.</li>
+    <li><em>Dedupe</em> — embedding similarity against prior windows and prior facts.</li>
+    <li><em>Extractors</em> — Decision, BusinessLogic, Intent, ProblemSolution. Routed by triage domain so business-logic agents don't waste tokens on chitchat.</li>
+    <li><em>Clusterer</em> — for each new fact, picks attach / create / merge against top-K nearest concepts.</li>
+    <li><em>Summarizer</em> — names and writes a structured summary for each touched concept.</li>
+    <li><em>Linker</em> — proposes cross-project links the mechanical pass missed.</li>
+    <li><em>Verifier</em> — periodic sweep for contradictions, supersessions, low-confidence pruning.</li>
+  </ul>
+
+  <h2 id="agents">The agent layer</h2>
+  <p>
+    There are nine chat agents and one embedding-only agent. Each has a
+    versioned prompt, a JSON schema, and a model reference resolved from
+    config. All share a single runtime that handles caching, validation, and
+    persistence.
+  </p>
+
+  <table>
+    <tr><th>Agent</th><th>Input</th><th>Output</th><th>Default routing</th></tr>
+    <tr><td><code>triage</code></td><td>turn window text</td><td>4-axis labels + kept/dropped</td><td>every new window</td></tr>
+    <tr><td><code>dedupe</code></td><td>text</td><td>embedding vector</td><td>every kept window + every new fact</td></tr>
+    <tr><td><code>decision</code></td><td>window</td><td>decisions / constraints / patterns</td><td>kept windows with signal-grade quality</td></tr>
+    <tr><td><code>businessLogic</code></td><td>window</td><td>business rules / entities / constraints</td><td>domain ∈ {business_logic, architecture}</td></tr>
+    <tr><td><code>intent</code></td><td>window</td><td>user intents</td><td>most engineering domains</td></tr>
+    <tr><td><code>problemSolution</code></td><td>window</td><td>(problem, solution) pairs</td><td>domain ∈ {debugging, implementation}</td></tr>
+    <tr><td><code>clusterer</code></td><td>new fact + top-K candidate concepts</td><td>attach / create / merge</td><td>each new fact</td></tr>
+    <tr><td><code>summarizer</code></td><td>concept + member facts</td><td>name + structured summary</td><td>each touched concept</td></tr>
+    <tr><td><code>linker</code></td><td>two cross-project concepts</td><td>same_as / variant_of / supersedes / contradicts / none</td><td>cross-project candidate pairs</td></tr>
+    <tr><td><code>verifier</code></td><td>pair of same-cluster facts</td><td>consistent / contradicts / supersedes</td><td>periodic sweep</td></tr>
+  </table>
+
+  <h2 id="runtime">Agent runtime</h2>
+  <p>
+    Every agent call goes through one function. Inputs are a typed payload
+    plus the agent's prompt and schema; outputs are validated JSON, cached
+    by content hash, and persisted to <code>agent_runs</code> for audit.
+  </p>
+
+  <pre><code>interface Agent&lt;I, O&gt; {
+  name: string;
+  promptVersion: number;        // bump invalidates cache
+  modelKey?: string;            // overrides config lookup
+  schema: JsonSchema;           // strict validation
+  prompt(input): ChatMessage[];
+  postprocess?(o, input): { output, confidence };
+}
+
+interface AgentRuntime {
+  run&lt;I, O&gt;(agent, input): Promise&lt;{ output, confidence, model, cached }&gt;;
+  // 1. hash(agent.name + model + prompt_version + input) -&gt; cache lookup
+  // 2. call backend (Ollama / OpenAI-compatible / Anthropic)
+  // 3. parse JSON; validate against schema; one repair retry on failure
+  // 4. write to agent_runs (success or failure)
+}</code></pre>
+
+  <p><strong>Cache invariants</strong></p>
+  <ul>
+    <li>Same input + same model + same prompt version → cached hit, zero cost</li>
+    <li>Bump <code>promptVersion</code> → all prior runs ignored, agent re-runs</li>
+    <li>Swap model in config → cache miss only for affected agent; others unchanged</li>
+  </ul>
+
+  <h2 id="storage">Storage</h2>
+
+  <pre><code>&lt;project&gt;/.codegps/
+├── code.db          # L0 — codegraph-compatible schema
+│   ├── nodes              (id, kind, name, qualified_name, file_path, ...)
+│   ├── edges              (source, target, kind, line, col, provenance)
+│   ├── files              (path, content_hash, indexed_at, ...)
+│   ├── nodes_fts          (FTS5 over names / signatures / docstrings)
+│   └── unresolved_refs
+│
+├── knowledge.db     # L1, L1.5, L2, L3 + agent cache
+│   ├── sessions / turns / tool_calls
+│   ├── turns_fts          (FTS5 over turn text)
+│   ├── turn_windows / triage_labels
+│   ├── k_nodes / k_edges / k_provenance / k_to_code
+│   ├── k_nodes_fts        (FTS5 over fact titles + summaries)
+│   ├── k_node_embeddings  (sidecar — keeps k_nodes lean)
+│   ├── concepts
+│   └── agent_runs         (cache + audit)
+│
+└── canvas/          # generated .canvas.tsx artifacts
+
+~/.codegps/
+├── global.db
+│   ├── projects
+│   ├── concepts_global    (mirrors per-project concepts with embeddings)
+│   └── concept_links      (a, b, kind, score, source)
+└── config.json</code></pre>
+
+  <p>
+    Three databases, three responsibilities. The split keeps the code DB
+    drop-in for <a href="https://github.com/colbymchenry/codegraph">codegraph</a>
+    users and lets the knowledge schema evolve independently.
+  </p>
+
+  <h2 id="languages">Languages</h2>
+  <table>
+    <tr><th>Extensions</th><th>Language</th><th>Engine</th></tr>
+    <tr><td><code>.ts .tsx .mts .cts .js .jsx .mjs .cjs</code></td><td>TypeScript / JavaScript</td><td>tree-sitter</td></tr>
+    <tr><td><code>.py</code></td><td>Python</td><td>tree-sitter</td></tr>
+    <tr><td><code>.dart</code></td><td>Dart</td><td>tree-sitter</td></tr>
+    <tr><td><code>.go</code></td><td>Go</td><td>tree-sitter</td></tr>
+    <tr><td><code>.rs</code></td><td>Rust</td><td>tree-sitter</td></tr>
+    <tr><td><code>.java</code></td><td>Java</td><td>tree-sitter</td></tr>
+    <tr><td><code>.cs</code></td><td>C#</td><td>tree-sitter</td></tr>
+    <tr><td><code>.sql .ddl</code></td><td>SQL DDL</td><td>regex parser</td></tr>
+  </table>
+  <p class="small">
+    Adding a language: a new entry in <code>src/code/languages.ts</code> plus
+    ~50 lines of node-type handlers in <code>src/code/extractor.ts</code>.
+    Tree-sitter WASMs for Swift, Kotlin, PHP, Ruby, C, and C++ are already
+    shipped in <code>tree-sitter-wasms</code> and only need wiring.
+  </p>
+
+  <h2 id="sources">Conversation sources</h2>
+  <table>
+    <tr><th>Source</th><th>Location</th><th>Coverage</th></tr>
+    <tr><td>Cursor</td><td><code>~/.cursor/projects/&lt;slug&gt;/agent-transcripts/&lt;uuid&gt;/&lt;uuid&gt;.jsonl</code></td><td>full + tool calls</td></tr>
+    <tr><td>Claude Code</td><td><code>~/.claude/projects/&lt;slug&gt;/*.jsonl</code></td><td>full + tool calls</td></tr>
+    <tr><td>Codex CLI</td><td><code>~/.codex/sessions/**/*.jsonl</code></td><td>filtered by <code>cwd</code> metadata</td></tr>
+    <tr><td>GitHub Copilot Chat</td><td>VS Code workspace storage</td><td>best-effort (private API)</td></tr>
+  </table>
+
+  <h2 id="tradeoffs">Design trade-offs</h2>
+  <ul>
+    <li><strong>Local-only.</strong> No cloud sync. The hard runtime dependency is a local (or pluggable) LLM. The alternative would be regex-based NL understanding, which drifts the moment anyone tries to maintain it.</li>
+    <li><strong>Cached, not deterministic.</strong> Agent output is stable per <code>(agent, model, input_hash, prompt_version)</code>. Bumping the prompt version invalidates the cache by design.</li>
+    <li><strong>Incremental clustering.</strong> The Clusterer attaches greedily and may drift; <code>codegps link --rebuild</code> triggers a full recompute when the drift becomes visible.</li>
+    <li><strong>Pull-based ingest.</strong> No real-time chat hooks; re-run <code>codegps ingest</code> (or call <code>codegps_ingest</code> via MCP) to pick up new sessions.</li>
+    <li><strong>Code DB stays codegraph-compatible.</strong> New code-side fields go in <code>project_metadata</code> JSON rather than schema changes.</li>
+    <li><strong>Conservative triage by default.</strong> Windows are kept unless an axis is firmly negative with confidence ≥ 0.6. <code>triage audit --dropped</code> lets you tune.</li>
+  </ul>
+
+  <footer class="site-footer">
+    <span>v0.1.0 · MIT</span>
+    <span><a href="https://github.com/tienan92it/CodeGps">github.com/tienan92it/CodeGps</a></span>
+  </footer>
+</div>
+</body>
+</html>

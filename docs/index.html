@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CodeGps — local, layered knowledge graph</title>
+  <meta name="description" content="A local, layered knowledge graph across your code and your AI agent conversations. SQLite, agent-driven, MCP-native.">
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b25a3c' d='M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="shell">
+  <header class="site-header">
+    <a class="brand" href="./">
+      <svg class="brand-mark" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z"/></svg>
+      codegps
+    </a>
+    <nav class="site-nav">
+      <a class="active" href="./">overview</a>
+      <a href="getting-started.html">start</a>
+      <a href="architecture.html">architecture</a>
+      <a href="cli.html">cli</a>
+      <a href="mcp.html">mcp</a>
+      <a href="configuration.html">config</a>
+      <a href="https://github.com/tienan92it/CodeGps">github →</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h1>A local, layered knowledge graph across code and AI agent conversations.</h1>
+    <p class="tagline">
+      CodeGps indexes your code structure and the conversations you have with
+      AI coding agents (Cursor, Claude Code, Codex, Copilot) into one local
+      knowledge graph. An agent pipeline triages noise, extracts decisions
+      and business rules, clusters them into concepts, and links shared
+      concepts across repositories.
+    </p>
+    <div class="hero-actions">
+      <a class="primary" href="getting-started.html">$ codegps init →</a>
+      <a href="architecture.html">read the architecture</a>
+      <a href="https://github.com/tienan92it/CodeGps">source</a>
+    </div>
+  </section>
+
+  <div class="layers" aria-label="Layer stack">
+<span class="lname">L4</span>  <span class="ldesc">Cross-project links</span>      ── concepts shared between repos
+<span class="lname">L3</span>  <span class="ldesc">Concepts</span>                 ── clustered facts, agent-named
+<span class="lname">L2</span>  <span class="ldesc">Facts</span>                    ── decisions, business rules, intents
+<span class="lname">L1.5</span> <span class="ldesc">Triage</span>                  ── relevance / domain / quality / linkage
+<span class="lname">L1</span>  <span class="ldesc">Conversations</span>            ── sessions, turns, tool calls
+<span class="lname">L0</span>  <span class="ldesc">Code structure</span>           ── symbols, calls, imports, fields</div>
+
+  <section class="features">
+    <div class="feature">
+      <h3>Syntax is deterministic.</h3>
+      <p>File paths, code blocks, shell commands, stack traces — pure parsers. Tree-sitter for code, regex DDL for SQL.</p>
+    </div>
+    <div class="feature">
+      <h3>Meaning is agent-driven.</h3>
+      <p>Triage, extraction, clustering, linking, verification — each is a named agent with a versioned prompt and JSON schema, cached in <code>agent_runs</code>.</p>
+    </div>
+    <div class="feature">
+      <h3>Conversations as first-class evidence.</h3>
+      <p>Cursor / Claude Code / Codex / Copilot transcripts are ingested in-place. Decisions and rules survive the session.</p>
+    </div>
+    <div class="feature">
+      <h3>Local-first, SQLite throughout.</h3>
+      <p>Three databases: <code>code.db</code>, <code>knowledge.db</code>, and a global <code>~/.codegps/global.db</code>. Ollama is the default backend.</p>
+    </div>
+    <div class="feature">
+      <h3>MCP-native.</h3>
+      <p>14 tools over stdio. Drop into any MCP-aware agent in a single config block.</p>
+    </div>
+    <div class="feature">
+      <h3>Cross-project memory.</h3>
+      <p>Concepts you decided in project A surface when you start project B. Mechanical match plus a Linker Agent for semantic similarity.</p>
+    </div>
+  </section>
+
+  <h2>Quickstart</h2>
+  <pre class="shell"><code># 1. Install (Node 20+)
+git clone https://github.com/tienan92it/CodeGps && cd CodeGps
+npm install &amp;&amp; npm run build &amp;&amp; npm link
+
+# 2. Local LLM (one-time)
+ollama pull qwen3:4b-instruct
+ollama pull qwen2.5:14b
+ollama pull qwen3-embedding:0.6b
+
+# 3. Index a project
+cd /path/to/your/project
+codegps init
+codegps sync
+codegps ingest
+codegps status</code></pre>
+
+  <p>
+    Full walkthrough: <a href="getting-started.html">getting started →</a>
+  </p>
+
+  <h2>Why CodeGps exists</h2>
+  <p>
+    Pre-indexed code graphs (e.g. <a href="https://github.com/colbymchenry/codegraph">codegraph</a>)
+    make agents cheaper and faster. But they only know what the AST says, never
+    what you and the agent <em>decided</em> together — the rationale, the
+    constraints, the trade-offs that never made it into a comment.
+  </p>
+  <p>
+    CodeGps adds five layers on top: raw conversation, triage, facts, concepts,
+    and cross-project links. Each layer is auditable, each agent's run is
+    cached, and every semantic call is a model + prompt + schema you can swap.
+  </p>
+
+  <footer class="site-footer">
+    <span>v0.1.0 · MIT</span>
+    <span>
+      <a href="https://github.com/tienan92it/CodeGps">github.com/tienan92it/CodeGps</a>
+    </span>
+  </footer>
+</div>
+</body>
+</html>

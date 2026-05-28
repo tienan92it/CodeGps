@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP — CodeGps</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b25a3c' d='M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="shell">
+  <header class="site-header">
+    <a class="brand" href="./">
+      <svg class="brand-mark" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z"/></svg>
+      codegps
+    </a>
+    <nav class="site-nav">
+      <a href="./">overview</a>
+      <a href="getting-started.html">start</a>
+      <a href="architecture.html">architecture</a>
+      <a href="cli.html">cli</a>
+      <a class="active" href="mcp.html">mcp</a>
+      <a href="configuration.html">config</a>
+      <a href="https://github.com/tienan92it/CodeGps">github →</a>
+    </nav>
+  </header>
+
+  <h1>MCP integration</h1>
+  <p class="lede">
+    A single MCP server exposes 14 tools — both code (L0) and knowledge
+    (L1.5–L3) — over stdio. Drop into any MCP-aware agent with a few lines
+    of config.
+  </p>
+
+  <h2 id="cursor">Cursor</h2>
+  <p>Add to <code>~/.cursor/mcp.json</code>:</p>
+  <pre><code>{
+  "mcpServers": {
+    "codegps": {
+      "command": "codegps",
+      "args": ["serve", ".", "--mcp"]
+    }
+  }
+}</code></pre>
+  <p>
+    Replace <code>"."</code> with an absolute project path if you want the
+    server to operate on a fixed project regardless of where Cursor is invoked.
+  </p>
+
+  <h2 id="claude-code">Claude Code</h2>
+  <p>Add to <code>~/.claude/claude_desktop_config.json</code> (macOS path may vary):</p>
+  <pre><code>{
+  "mcpServers": {
+    "codegps": {
+      "command": "codegps",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}</code></pre>
+
+  <h2 id="codex">Codex CLI / other</h2>
+  <p>
+    Any MCP-compatible client that supports the stdio transport works the
+    same way. The command is <code>codegps serve [path] --mcp</code>; no
+    flags beyond <code>--mcp</code>.
+  </p>
+
+  <h2 id="tools">Tool catalogue</h2>
+  <table>
+    <tr><th>Tool</th><th>Purpose</th><th>Key args</th></tr>
+    <tr><td><code>codegps_search</code></td><td>Symbol search across code by name + kind.</td><td><code>query, kind?, limit?</code></td></tr>
+    <tr><td><code>codegps_node</code></td><td>One symbol's details — signature, docstring, location.</td><td><code>name</code></td></tr>
+    <tr><td><code>codegps_context</code></td><td>Primary tool. Builds context for a topic — facts + related code in one call.</td><td><code>task, limit?</code></td></tr>
+    <tr><td><code>codegps_recall</code></td><td>FTS query across past conversations and extracted facts.</td><td><code>query, kinds?, limit?</code></td></tr>
+    <tr><td><code>codegps_decisions</code></td><td>List decisions / constraints / patterns for a topic or file.</td><td><code>topic?, file?, limit?</code></td></tr>
+    <tr><td><code>codegps_business_logic</code></td><td>List business rules / invariants / entities.</td><td><code>topic?, file?, limit?</code></td></tr>
+    <tr><td><code>codegps_concepts</code></td><td>List or inspect L3 concepts. Pass a conceptId for members + summary.</td><td><code>conceptId?, domain?, limit?</code></td></tr>
+    <tr><td><code>codegps_explain</code></td><td>Structured systematic-thinking view of a concept (problem / constraints / options / decision / consequences).</td><td><code>conceptId</code></td></tr>
+    <tr><td><code>codegps_link</code></td><td>Cross-project — where else this concept appears, with relation kind and score.</td><td><code>conceptId</code></td></tr>
+    <tr><td><code>codegps_triage_audit</code></td><td>Inspect kept vs dropped windows with rationale.</td><td><code>droppedOnly?, limit?</code></td></tr>
+    <tr><td><code>codegps_verify</code></td><td>Run Verifier sweep on demand.</td><td><code>pruneBelow?</code></td></tr>
+    <tr><td><code>codegps_ingest</code></td><td>Trigger incremental ingest + agent pipeline.</td><td><code>runTriage?, runExtract?</code></td></tr>
+    <tr><td><code>codegps_sync</code></td><td>Trigger code re-index.</td><td><code>full?</code></td></tr>
+    <tr><td><code>codegps_status</code></td><td>Counts per layer.</td><td>—</td></tr>
+  </table>
+
+  <h2 id="usage-patterns">Usage patterns</h2>
+
+  <h3>Carrying decisions forward</h3>
+  <p>
+    When starting work on a new feature, prompt the agent to recall prior
+    decisions before writing code:
+  </p>
+  <blockquote>
+    "Before designing the payment retry flow, call <code>codegps_decisions</code>
+    with topic 'retry' and tell me what we've already decided. Then call
+    <code>codegps_business_logic</code> for 'payment' to surface invariants."
+  </blockquote>
+
+  <h3>Onboarding a teammate</h3>
+  <p>
+    <code>codegps_concepts</code> with no arguments lists the top concepts in
+    a project ranked by member count. <code>codegps_explain conceptId</code>
+    expands one into a structured brief.
+  </p>
+
+  <h3>Auditing what the system kept</h3>
+  <p>
+    If a decision you remember discussing didn't surface, run
+    <code>codegps_triage_audit droppedOnly:true</code> to see what got filtered
+    and why. The rationale string captures the Triage Agent's reasoning;
+    if the filter was wrong, retune triage (bump prompt version or swap model).
+  </p>
+
+  <h2 id="transport">Transport details</h2>
+  <p>
+    Stdio only. The server logs to stderr (not visible to the MCP client) and
+    speaks JSON-RPC 2.0 on stdout. No network sockets are opened.
+  </p>
+  <p>
+    Verify the server independently:
+  </p>
+  <pre class="shell"><code>printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' \
+  | codegps serve . --mcp</code></pre>
+
+  <footer class="site-footer">
+    <span>v0.1.0 · MIT</span>
+    <span><a href="https://github.com/tienan92it/CodeGps">github.com/tienan92it/CodeGps</a></span>
+  </footer>
+</div>
+</body>
+</html>

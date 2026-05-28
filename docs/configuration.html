@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuration — CodeGps</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23b25a3c' d='M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="shell">
+  <header class="site-header">
+    <a class="brand" href="./">
+      <svg class="brand-mark" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 L14 12 L12 22 L10 12 Z M2 12 L12 14 L22 12 L12 10 Z"/></svg>
+      codegps
+    </a>
+    <nav class="site-nav">
+      <a href="./">overview</a>
+      <a href="getting-started.html">start</a>
+      <a href="architecture.html">architecture</a>
+      <a href="cli.html">cli</a>
+      <a href="mcp.html">mcp</a>
+      <a class="active" href="configuration.html">config</a>
+      <a href="https://github.com/tienan92it/CodeGps">github →</a>
+    </nav>
+  </header>
+
+  <h1>Configuration</h1>
+  <p class="lede">
+    Per-agent model selection lives in JSON. Global defaults at
+    <code>~/.codegps/config.json</code>; per-project overrides at
+    <code>&lt;project&gt;/.codegps/config.json</code>. Per-project values
+    deep-merge over global.
+  </p>
+
+  <div class="toc">
+    <h4>on this page</h4>
+    <ul>
+      <li><a href="#schema">schema</a></li>
+      <li><a href="#backends">backends</a></li>
+      <li><a href="#agents">agent specs</a></li>
+      <li><a href="#picks">model picks (m-series 24 gb)</a></li>
+      <li><a href="#hardware-budgets">hardware budgets</a></li>
+      <li><a href="#frontier">frontier-quality routing</a></li>
+      <li><a href="#transcript-roots">transcript roots</a></li>
+      <li><a href="#cache">cache invalidation</a></li>
+    </ul>
+  </div>
+
+  <h2 id="schema">Schema</h2>
+  <pre><code>{
+  "agentBackends": {
+    "&lt;name&gt;": { "kind": "ollama|openai-compatible|anthropic",
+                "endpoint": "&lt;url&gt;",
+                "apiKeyEnv": "&lt;ENV_VAR&gt;" }
+  },
+  "agents": {
+    "&lt;agent-name&gt;": {
+      "model": "&lt;backend&gt;:&lt;model&gt;",
+      "fallback": "&lt;backend&gt;:&lt;model&gt;",
+      "windowTokens": 2000
+    }
+  },
+  "transcriptRoots": {
+    "cursor":     "~/.cursor/projects",
+    "claudeCode": "~/.claude/projects",
+    "codex":      "~/.codex/sessions"
+  }
+}</code></pre>
+
+  <h2 id="backends">Backends</h2>
+
+  <table>
+    <tr><th>Kind</th><th>What it speaks</th><th>Auth</th></tr>
+    <tr><td><code>ollama</code></td><td>Ollama HTTP API (<code>/api/chat</code>, <code>/api/embeddings</code>)</td><td>none</td></tr>
+    <tr><td><code>openai-compatible</code></td><td>OpenAI Chat Completions + Embeddings shape (works with OpenAI, Together, Groq, OpenRouter, ...)</td><td><code>apiKeyEnv</code> → reads <code>process.env[name]</code></td></tr>
+    <tr><td><code>anthropic</code></td><td>(placeholder)</td><td>not yet implemented</td></tr>
+  </table>
+
+  <p>Backends are referenced from agent specs by name:</p>
+  <pre><code>{
+  "agentBackends": {
+    "default":   { "kind": "ollama", "endpoint": "http://localhost:11434" },
+    "frontier":  { "kind": "openai-compatible",
+                   "endpoint": "https://api.openai.com/v1",
+                   "apiKeyEnv": "OPENAI_API_KEY" }
+  }
+}</code></pre>
+
+  <h2 id="agents">Agent specs</h2>
+  <p>Each agent gets one spec. The <code>model</code> string is <code>"&lt;backend&gt;:&lt;model&gt;"</code>; the first colon splits, so model names with colons (e.g. <code>llama3.1:8b</code>) are fine.</p>
+  <pre><code>{
+  "agents": {
+    "triage":          { "model": "default:qwen3:4b-instruct", "windowTokens": 2000 },
+    "dedupe":          { "model": "default:qwen3-embedding:0.6b" },
+    "decision":        { "model": "default:qwen2.5:14b" },
+    "businessLogic":   { "model": "default:qwen2.5:14b" },
+    "intent":          { "model": "default:qwen3:4b-instruct" },
+    "problemSolution": { "model": "default:qwen2.5:14b" },
+    "clusterer":       { "model": "default:qwen3:4b-instruct" },
+    "summarizer":      { "model": "default:qwen2.5:14b" },
+    "linker":          { "model": "default:qwen2.5:14b" },
+    "verifier":        { "model": "default:qwen2.5:14b" }
+  }
+}</code></pre>
+
+  <h2 id="picks">Model picks — M-series Mac, 24 GB</h2>
+  <table>
+    <tr><th>Role</th><th>Pick</th><th>Why</th></tr>
+    <tr>
+      <td>Classifier (triage, intent, clusterer)</td>
+      <td><code>qwen3:4b-instruct</code><br><span class="small">~2.5 GB</span></td>
+      <td>Top of MTEB-adjacent JSON-strict benchmarks at 4B; cheap, fast.</td>
+    </tr>
+    <tr>
+      <td>Extractor (decision, businessLogic, summarizer, linker, verifier)</td>
+      <td><code>qwen2.5:14b</code><br><span class="small">~9 GB Q4</span></td>
+      <td>Strongest structured extraction at this scale (≈ 94% vs ≈ 87% Llama on entity-extraction tests).</td>
+    </tr>
+    <tr>
+      <td>Embeddings (dedupe)</td>
+      <td><code>qwen3-embedding:0.6b</code><br><span class="small">~1 GB</span></td>
+      <td>#1 on MTEB at this size, 32K context.</td>
+    </tr>
+  </table>
+  <p class="small">
+    Combined hot footprint ≈ 12.5 GB. Leaves ~10 GB headroom on a 24 GB
+    machine for macOS, Cursor, browser.
+  </p>
+
+  <h2 id="hardware-budgets">Hardware budgets</h2>
+  <table>
+    <tr><th>RAM budget</th><th>Suggested classifier</th><th>Suggested extractor</th><th>Notes</th></tr>
+    <tr><td>8 GB</td><td><code>phi4-mini:3.8b</code></td><td>(skip — use classifier for everything)</td><td>Quality suffers but the pipeline runs.</td></tr>
+    <tr><td>16 GB</td><td><code>qwen3:4b-instruct</code></td><td><code>llama3.1:8b</code> or <code>qwen2.5:7b</code></td><td>Acceptable on most workloads.</td></tr>
+    <tr><td>24 GB (M-series)</td><td><code>qwen3:4b-instruct</code></td><td><code>qwen2.5:14b</code></td><td>Recommended default.</td></tr>
+    <tr><td>32 GB+</td><td><code>qwen3:4b-instruct</code></td><td><code>qwen2.5:32b</code> or remote frontier</td><td>Best local quality.</td></tr>
+  </table>
+
+  <h2 id="frontier">Frontier-quality routing</h2>
+  <p>
+    Add a second backend and route only the hardest agents to it. The rest
+    stay local; the cheap classifier still runs locally per ingest.
+  </p>
+  <pre><code>{
+  "agentBackends": {
+    "default":  { "kind": "ollama", "endpoint": "http://localhost:11434" },
+    "frontier": { "kind": "openai-compatible",
+                  "endpoint": "https://api.openai.com/v1",
+                  "apiKeyEnv": "OPENAI_API_KEY" }
+  },
+  "agents": {
+    "triage":          { "model": "default:qwen3:4b-instruct" },
+    "dedupe":          { "model": "default:qwen3-embedding:0.6b" },
+    "decision":        { "model": "frontier:gpt-4o-mini",
+                         "fallback": "default:qwen2.5:14b" },
+    "businessLogic":   { "model": "frontier:gpt-4o-mini",
+                         "fallback": "default:qwen2.5:14b" },
+    "intent":          { "model": "default:qwen3:4b-instruct" },
+    "problemSolution": { "model": "default:qwen2.5:14b" },
+    "clusterer":       { "model": "default:qwen3:4b-instruct" },
+    "summarizer":      { "model": "default:qwen2.5:14b" },
+    "linker":          { "model": "frontier:gpt-4o-mini",
+                         "fallback": "default:qwen2.5:14b" },
+    "verifier":        { "model": "default:qwen2.5:14b" }
+  }
+}</code></pre>
+  <p class="small">
+    The <code>fallback</code> field is reserved for runtime fallback on
+    backend errors. Implementation lands when needed.
+  </p>
+
+  <h2 id="transcript-roots">Transcript roots</h2>
+  <p>If your AI agent stores transcripts in a non-default location, override the root:</p>
+  <pre><code>{
+  "transcriptRoots": {
+    "cursor":     "/Volumes/data/cursor-projects",
+    "claudeCode": "~/work/.claude/projects"
+  }
+}</code></pre>
+
+  <h2 id="cache">Cache invalidation</h2>
+  <p>
+    Agent runs are cached in <code>knowledge.db / agent_runs</code> by
+    <code>(agent.name, model, input_hash, prompt_version)</code>. To force
+    a re-run for an agent:
+  </p>
+  <ul>
+    <li><strong>Swap the model</strong> in config — only that agent's cache misses.</li>
+    <li><strong>Bump <code>promptVersion</code></strong> in the agent source — invalidates the cache for that agent on next ingest.</li>
+    <li><strong>Edit input</strong> (rare, ingest-driven) — different content hash → new run.</li>
+    <li><strong>Wipe selectively</strong> via SQL:
+      <pre><code>DELETE FROM agent_runs WHERE agent_name='triage';</code></pre>
+    </li>
+  </ul>
+
+  <p>
+    Use <code>codegps verify --invalidate-triage-days 30</code> to invalidate
+    triage runs older than 30 days so the next ingest re-triages stale
+    windows.
+  </p>
+
+  <footer class="site-footer">
+    <span>v0.1.0 · MIT</span>
+    <span><a href="https://github.com/tienan92it/CodeGps">github.com/tienan92it/CodeGps</a></span>
+  </footer>
+</div>
+</body>
+</html>
