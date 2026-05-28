@@ -1,0 +1,6 @@
+{
+  "payload": {
+    "windowId": "wC",
+    "text": "[user] How should we handle refunds? Customers complain that partial refunds appear before the full one finishes.\n\n[assistant] Business rule: a refund is final only when the payment processor returns 'succeeded'. Until then it stays in pending state and the customer sees 'refund initiated' (never a balance change). Partial refunds reuse the same state machine, just with a smaller amount. Edge case: if the original payment is older than 180 days we must use store credit instead — that's the processor's hard limit."
+  }
+}

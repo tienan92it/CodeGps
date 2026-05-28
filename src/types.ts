@@ -1,0 +1,249 @@
+/**
+ * CodeGps core type definitions.
+ *
+ * Mirrors the layered model (L0..L4) described in the plan.
+ */
+
+// =============================================================================
+// L0 — Code Structure (codegraph-compatible)
+// =============================================================================
+
+export const NODE_KINDS = [
+  'file', 'module', 'class', 'struct', 'interface', 'trait', 'protocol',
+  'function', 'method', 'property', 'field', 'variable', 'constant',
+  'enum', 'enum_member', 'type_alias', 'namespace', 'parameter',
+  'import', 'export', 'route', 'component',
+  // SQL-specific
+  'table', 'index',
+] as const;
+export type NodeKind = (typeof NODE_KINDS)[number];
+
+export type EdgeKind =
+  | 'contains' | 'calls' | 'imports' | 'exports'
+  | 'extends'  | 'implements' | 'references'
+  | 'type_of'  | 'returns' | 'instantiates'
+  | 'overrides' | 'decorates';
+
+export const LANGUAGES = [
+  'typescript', 'javascript', 'tsx', 'jsx', 'python',
+  'dart', 'go', 'rust', 'java', 'csharp', 'sql', 'unknown',
+] as const;
+export type Language = (typeof LANGUAGES)[number];
+
+export interface CodeNode {
+  id: string;
+  kind: NodeKind;
+  name: string;
+  qualifiedName: string;
+  filePath: string;
+  language: Language;
+  startLine: number;
+  endLine: number;
+  startColumn: number;
+  endColumn: number;
+  docstring?: string;
+  signature?: string;
+  visibility?: 'public' | 'private' | 'protected' | 'internal';
+  isExported?: boolean;
+  isAsync?: boolean;
+  isStatic?: boolean;
+  isAbstract?: boolean;
+  decorators?: string[];
+  typeParameters?: string[];
+  updatedAt: number;
+}
+
+export interface CodeEdge {
+  id?: number;
+  source: string;
+  target: string;
+  kind: EdgeKind;
+  metadata?: Record<string, unknown>;
+  line?: number;
+  col?: number;
+  provenance?: string;
+}
+
+export interface IndexedFile {
+  path: string;
+  contentHash: string;
+  language: Language;
+  size: number;
+  modifiedAt: number;
+  indexedAt: number;
+  nodeCount: number;
+  errors?: string[];
+}
+
+// =============================================================================
+// L1 — Conversations
+// =============================================================================
+
+export type AgentId = 'cursor' | 'claude-code' | 'codex' | 'copilot';
+
+export interface Session {
+  id: string;
+  agent: AgentId;
+  sourceId: string;
+  sourcePath: string;
+  startedAt?: number;
+  endedAt?: number;
+  title?: string;
+  ingestedAt: number;
+  ingestOffset: number;
+}
+
+export type TurnRole = 'user' | 'assistant' | 'tool' | 'system';
+
+export interface Turn {
+  id: string;
+  sessionId: string;
+  idx: number;
+  role: TurnRole;
+  text: string;
+  ts?: number;
+  raw?: unknown;
+}
+
+export interface ToolCall {
+  id: string;
+  turnId: string;
+  name: string;
+  args?: unknown;
+  resultExcerpt?: string;
+  targetPaths?: string[];
+}
+
+export interface RawTurn {
+  role: TurnRole;
+  text: string;
+  ts?: number;
+  raw: unknown;
+  toolCalls?: { name: string; args?: unknown; resultExcerpt?: string; targetPaths?: string[] }[];
+}
+
+export interface SessionRef {
+  agent: AgentId;
+  sourceId: string;
+  sourcePath: string;
+  title?: string;
+  startedAt?: number;
+}
+
+// =============================================================================
+// L1.5 — Triage
+// =============================================================================
+
+export interface TurnWindow {
+  id: string;
+  sessionId: string;
+  startTurn: string;
+  endTurn: string;
+  textHash: string;
+  text: string;           // not stored; computed on read
+  turns: Turn[];          // hydrated when needed
+}
+
+export type Relevance = 'on_topic' | 'off_topic' | 'mixed' | 'unknown';
+export type Domain =
+  | 'business_logic' | 'architecture' | 'implementation' | 'debugging'
+  | 'devops' | 'meta_process' | 'chitchat' | 'unknown';
+export type Quality = 'noise' | 'boilerplate' | 'signal' | 'decision_grade';
+export type Linkage = 'this_project' | 'cross_project' | 'general_knowledge' | 'unrelated';
+
+export interface TriageLabels {
+  windowId: string;
+  relevance: Relevance;
+  domain: Domain;
+  quality: Quality;
+  linkage: Linkage;
+  confidence: number;
+  rationale?: string;
+  model: string;
+  producedAt: number;
+  kept: boolean;
+}
+
+// =============================================================================
+// L2 — Facts (k_nodes)
+// =============================================================================
+
+export type KNodeKind =
+  | 'decision' | 'intent' | 'business_rule' | 'problem' | 'solution'
+  | 'question' | 'answer' | 'todo' | 'warning'
+  | 'pattern'  | 'entity' | 'constraint'
+  // syntax-source kinds (deterministic):
+  | 'path_mention' | 'code_block' | 'shell_command'
+  | 'error_message' | 'stack_trace' | 'ticket_id' | 'url';
+
+export type KEdgeKind =
+  | 'mentions' | 'resolves' | 'contradicts' | 'supersedes'
+  | 'derived_from' | 'same_as' | 'depends_on' | 'caused_by';
+
+export interface KNode {
+  id: string;
+  kind: KNodeKind;
+  title: string;
+  summary?: string;
+  evidenceText?: string;
+  confidence: number;
+  source: string;         // 'syntax' | 'agent:<name>' | 'manual'
+  agentModel?: string;
+  createdAt: number;
+  updatedAt: number;
+  clusterId?: string;
+}
+
+export interface KEdge {
+  id?: number;
+  source: string;
+  target: string;
+  kind: KEdgeKind;
+  weight?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface KProvenance {
+  kNodeId: string;
+  windowId: string;
+  spanStart?: number;
+  spanEnd?: number;
+}
+
+export interface KToCode {
+  kNodeId: string;
+  codeNodeId: string;
+  codeFile?: string;
+  weight?: number;
+}
+
+// =============================================================================
+// L3 — Concepts
+// =============================================================================
+
+export interface Concept {
+  id: string;
+  name: string;
+  summary?: string;
+  domain?: Domain;
+  memberCount: number;
+  embedding?: Buffer;
+}
+
+// =============================================================================
+// Agent runtime
+// =============================================================================
+
+export interface AgentRun {
+  id: string;
+  agentName: string;
+  model: string;
+  inputHash: string;
+  outputJson: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  ms?: number;
+  ok: boolean;
+  error?: string;
+  producedAt: number;
+}

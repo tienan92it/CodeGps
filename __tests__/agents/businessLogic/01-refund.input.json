@@ -1,0 +1,7 @@
+{
+  "payload": {
+    "windowId": "wB1",
+    "domain": "business_logic",
+    "text": "[user] refund rules?\n[assistant] A refund is only final once the processor returns succeeded; until then it stays pending and the customer sees 'refund initiated'. Refunds older than 180 days must use store credit instead (processor limit). Partial refunds share the state machine."
+  }
+}

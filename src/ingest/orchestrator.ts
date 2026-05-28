@@ -1,0 +1,194 @@
+/**
+ * Ingest orchestrator.
+ *
+ *   1. Discover sessions from configured adapters.
+ *   2. Read new turns (incremental via sessions.ingest_offset).
+ *   3. Re-segment session into windows; insert new ones.
+ *   4. Run deterministic syntax pass over each new window.
+ *   5. (M3+) Triage Agent labels each new window.
+ *   6. (M5+) Extractor agents on kept windows.
+ *
+ * This file owns 1–4 and stubs 5–6 (they get filled in by their milestones).
+ */
+import type { Database as SqliteDb } from 'better-sqlite3';
+import { openCodeDb, openKnowledgeDb } from '../db/connection.js';
+import { loadConfig } from '../config.js';
+import { CursorAdapter } from './cursor.js';
+import { ClaudeCodeAdapter } from './claude-code.js';
+import { CodexAdapter } from './codex.js';
+import { CopilotAdapter } from './copilot.js';
+import type { SessionAdapter } from './base.js';
+import { insertTurn, nextTurnIdx, turnsForSession, updateOffset, upsertSession } from './store.js';
+import { insertWindow, segmentTurnsToWindows } from '../pipeline/segmenter.js';
+import { runSyntaxPass } from '../pipeline/syntax.js';
+import { upsertKNode, insertProvenance } from '../knowledge/store.js';
+import { resolvePath, writeKToCode } from '../pipeline/resolve.js';
+import type { AgentId, Turn } from '../types.js';
+import { runTriageForWindows, type TriageRunResult } from '../pipeline/triage.js';
+import { runExtractorsForKeptWindows } from '../pipeline/extract.js';
+import { runClustererForNewFacts } from '../pipeline/cluster.js';
+
+export interface IngestOpts {
+  agentFilter?: AgentId;
+  runTriage?: boolean;
+  runExtract?: boolean;
+}
+
+export interface IngestStats {
+  sessionsSeen: number;
+  sessionsNew: number;
+  turnsIngested: number;
+  windowsCreated: number;
+  triaged: number;
+  kept: number;
+  dropped: number;
+  factsProduced: number;
+  conceptsCreated: number;
+  conceptsAttached: number;
+}
+
+export async function ingestProject(root: string, opts: IngestOpts = {}): Promise<IngestStats> {
+  const cfg = loadConfig(root);
+  const codeDb = openCodeDb(root);
+  const knowDb = openKnowledgeDb(root);
+
+  const stats: IngestStats = {
+    sessionsSeen: 0, sessionsNew: 0, turnsIngested: 0,
+    windowsCreated: 0, triaged: 0, kept: 0, dropped: 0, factsProduced: 0,
+    conceptsCreated: 0, conceptsAttached: 0,
+  };
+
+  try {
+    const adapters: SessionAdapter[] = pickAdapters(cfg, opts.agentFilter);
+    const newWindowIds: string[] = [];
+
+    for (const adapter of adapters) {
+      for await (const ref of adapter.discover(root)) {
+        stats.sessionsSeen++;
+        const now = Date.now();
+        const { id: sessionId, isNew, offset } = upsertSession(knowDb, ref, now);
+        if (isNew) stats.sessionsNew++;
+
+        const firstNewIdx = nextTurnIdx(knowDb, sessionId);
+        let lastOffset = offset;
+
+        // Read new turns within a single transaction per session for speed.
+        const insertTx = knowDb.transaction((batch: Array<{ idx: number; raw: any; offsetAfter: number }>) => {
+          for (const item of batch) {
+            insertTurn(knowDb, sessionId, item.idx, item.raw);
+            stats.turnsIngested++;
+            lastOffset = item.offsetAfter;
+          }
+          updateOffset(knowDb, sessionId, lastOffset);
+        });
+
+        const batch: Array<{ idx: number; raw: any; offsetAfter: number }> = [];
+        let idx = firstNewIdx;
+        for await (const { turn, offsetAfter } of adapter.read(ref, offset)) {
+          batch.push({ idx, raw: turn, offsetAfter });
+          idx++;
+          if (batch.length >= 500) {
+            insertTx(batch.splice(0, batch.length));
+          }
+        }
+        if (batch.length) insertTx(batch);
+
+        if (firstNewIdx === idx) continue; // nothing new
+
+        // Re-segment from the first NEW turn — but we need context, so segment
+        // from one user-turn earlier if possible.
+        const segStart = Math.max(0, firstNewIdx - 4);
+        const segTurns: Turn[] = turnsForSession(knowDb, sessionId, segStart);
+        const windows = segmentTurnsToWindows(sessionId, segTurns);
+
+        const newOnly = windows.filter((w) => parseInt(w.startTurn.split('-').pop()!, 10) >= firstNewIdx - 1);
+
+        const windowTx = knowDb.transaction(() => {
+          for (const w of newOnly) {
+            const before = stats.windowsCreated;
+            insertWindow(knowDb, w);
+            // detect if it was new by checking if it had previously existed:
+            const existed = knowDb
+              .prepare(`SELECT 1 FROM turn_windows WHERE id=?`)
+              .get(w.id);
+            if (existed) {
+              // count as created only if we didn't already process it (heuristic: no syntax facts yet)
+              const haveSyntax = knowDb
+                .prepare(`SELECT 1 FROM k_provenance WHERE window_id=? LIMIT 1`)
+                .get(w.id);
+              if (!haveSyntax) {
+                runSyntaxForWindow(codeDb, knowDb, w.id, w.text);
+                stats.windowsCreated++;
+                newWindowIds.push(w.id);
+              }
+              if (stats.windowsCreated === before) {
+                // window was already present + already had syntax pass; skip
+              }
+            }
+          }
+        });
+        windowTx();
+      }
+    }
+
+    // 5. Triage (M3)
+    if (opts.runTriage !== false && newWindowIds.length > 0) {
+      const tri: TriageRunResult = await runTriageForWindows(root, knowDb, cfg, newWindowIds);
+      stats.triaged = tri.triaged;
+      stats.kept = tri.kept;
+      stats.dropped = tri.dropped;
+      // 6. Extractors only over kept windows (M5)
+      if (opts.runExtract !== false && tri.keptWindowIds.length > 0) {
+        const exStats = await runExtractorsForKeptWindows(root, knowDb, codeDb, cfg, tri.keptWindowIds);
+        stats.factsProduced = exStats.factsProduced;
+
+        // 7. Clusterer + Summarizer over newly-produced facts (M7)
+        if (exStats.factsProduced > 0) {
+          const clStats = await runClustererForNewFacts(knowDb, cfg);
+          stats.conceptsCreated = clStats.created;
+          stats.conceptsAttached = clStats.attached;
+        }
+      }
+    }
+  } finally {
+    codeDb.close();
+    knowDb.close();
+  }
+  return stats;
+}
+
+function pickAdapters(_cfg: ReturnType<typeof loadConfig>, filter?: AgentId): SessionAdapter[] {
+  const all: SessionAdapter[] = [
+    new CursorAdapter(),
+    new ClaudeCodeAdapter(),
+    new CodexAdapter(),
+    new CopilotAdapter(),
+  ];
+  if (!filter) return all;
+  return all.filter((a) => a.agent === filter);
+}
+
+function runSyntaxForWindow(codeDb: SqliteDb, knowDb: SqliteDb, windowId: string, text: string): number {
+  const artifacts = runSyntaxPass(text, { windowId });
+  let inserted = 0;
+  const tx = knowDb.transaction(() => {
+    for (const a of artifacts) {
+      upsertKNode(knowDb, a.node);
+      insertProvenance(knowDb, a.provenance);
+      inserted++;
+      if (a.pathMention) {
+        const r = resolvePath(codeDb, a.pathMention);
+        if (r) {
+          writeKToCode(knowDb, {
+            kNodeId: a.node.id,
+            codeNodeId: r.codeNodeId,
+            codeFile: r.codeFile,
+            weight: 1,
+          });
+        }
+      }
+    }
+  });
+  tx();
+  return inserted;
+}

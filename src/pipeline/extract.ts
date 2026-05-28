@@ -1,0 +1,172 @@
+/**
+ * Extractor orchestrator.
+ *
+ * For each kept window:
+ *   1. Look up its triage labels.
+ *   2. Choose which extractor agents to run (routed by domain + quality).
+ *   3. Run each agent (cached); persist facts + provenance.
+ *   4. Resolve symbol_mentions and file_mentions to L0 code nodes; write k_to_code.
+ *   5. Generate an embedding for each new fact via the Dedupe Agent.
+ */
+import type { Database as SqliteDb } from 'better-sqlite3';
+import { AgentRuntime, type Agent } from '../agents/runtime.js';
+import type { CodeGpsConfig } from '../config.js';
+import '../agents/index.js';
+import { DECISION_AGENT } from '../agents/decision.js';
+import { BUSINESS_LOGIC_AGENT } from '../agents/business-logic.js';
+import { INTENT_AGENT } from '../agents/intent.js';
+import { PROBLEM_SOLUTION_AGENT } from '../agents/problem-solution.js';
+import {
+  factToRows,
+  type ExtractorOutput,
+  type ExtractorPayload,
+} from '../agents/extractors-common.js';
+import { DedupeAgent, storeKNodeEmbedding } from '../agents/dedupe.js';
+import { getWindowText, getTriageLabels } from '../knowledge/triage-store.js';
+import { upsertKNode, insertProvenance } from '../knowledge/store.js';
+import { resolvePath, resolveSymbol, writeKToCode } from './resolve.js';
+
+export interface ExtractStats {
+  factsProduced: number;
+  factsByAgent: Record<string, number>;
+  factsByKind: Record<string, number>;
+  codeLinks: number;
+}
+
+type Extractor = Agent<ExtractorPayload, ExtractorOutput>;
+
+interface RoutingDecision {
+  agents: Extractor[];
+}
+
+/**
+ * Routing rules — which extractor runs on which window.
+ * Conservative defaults: run agents that are likely productive given the domain.
+ */
+function route(domain: string, quality: string): RoutingDecision {
+  const agents: Extractor[] = [];
+
+  // Decision agent is broadly useful — runs on most engineering domains.
+  if (
+    ['architecture', 'implementation', 'business_logic', 'debugging', 'devops'].includes(domain) &&
+    ['signal', 'decision_grade'].includes(quality)
+  ) {
+    agents.push(DECISION_AGENT);
+  }
+
+  // Business logic only when the triage said so.
+  if (['business_logic', 'architecture'].includes(domain)) {
+    agents.push(BUSINESS_LOGIC_AGENT);
+  }
+
+  // Intent — anywhere there's likely a user goal.
+  if (['architecture', 'implementation', 'business_logic', 'debugging'].includes(domain)) {
+    agents.push(INTENT_AGENT);
+  }
+
+  // Problem/solution — debugging + implementation
+  if (['debugging', 'implementation'].includes(domain)) {
+    agents.push(PROBLEM_SOLUTION_AGENT);
+  }
+
+  return { agents };
+}
+
+export async function runExtractorsForKeptWindows(
+  _root: string,
+  knowDb: SqliteDb,
+  codeDb: SqliteDb,
+  cfg: CodeGpsConfig,
+  windowIds: string[],
+): Promise<ExtractStats> {
+  const rt = new AgentRuntime({ knowledgeDb: knowDb, config: cfg });
+  const stats: ExtractStats = {
+    factsProduced: 0,
+    factsByAgent: {},
+    factsByKind: {},
+    codeLinks: 0,
+  };
+
+  // Initialize Dedupe Agent best-effort. If embeddings backend is unavailable,
+  // we still produce facts (just without per-fact embeddings).
+  let dedupe: DedupeAgent | undefined;
+  try { dedupe = new DedupeAgent(cfg); } catch { dedupe = undefined; }
+
+  for (const windowId of windowIds) {
+    const labels = getTriageLabels(knowDb, windowId);
+    if (!labels) continue;
+    const text = getWindowText(knowDb, windowId);
+    if (!text) continue;
+
+    // Skip windows tagged as duplicates by the Dedupe pass in triage.
+    if (labels.rationale && /\[dup_of:/.test(labels.rationale)) continue;
+
+    const { agents } = route(labels.domain, labels.quality);
+    if (agents.length === 0) continue;
+
+    for (const agent of agents) {
+      let out;
+      try {
+        out = await rt.run<ExtractorPayload, ExtractorOutput>(agent, {
+          payload: { text, windowId, domain: labels.domain },
+        });
+      } catch {
+        // Backend error: skip this agent for this window, continue with others.
+        continue;
+      }
+
+      for (const fact of out.output.facts) {
+        const { node, provenance } = factToRows(fact, windowId, agent.name, out.model);
+        const tx = knowDb.transaction(() => {
+          upsertKNode(knowDb, node);
+          insertProvenance(knowDb, provenance);
+        });
+        tx();
+        stats.factsProduced++;
+        stats.factsByAgent[agent.name] = (stats.factsByAgent[agent.name] ?? 0) + 1;
+        stats.factsByKind[fact.kind] = (stats.factsByKind[fact.kind] ?? 0) + 1;
+
+        // L2 -> L0 bridging
+        if (fact.file_mentions) {
+          for (const path of fact.file_mentions) {
+            const r = resolvePath(codeDb, path);
+            if (r) {
+              writeKToCode(knowDb, {
+                kNodeId: node.id,
+                codeNodeId: r.codeNodeId,
+                codeFile: r.codeFile,
+              });
+              stats.codeLinks++;
+            }
+          }
+        }
+        if (fact.symbol_mentions) {
+          for (const name of fact.symbol_mentions) {
+            for (const cand of resolveSymbol(codeDb, name)) {
+              writeKToCode(knowDb, {
+                kNodeId: node.id,
+                codeNodeId: cand.id,
+                codeFile: cand.file,
+                weight: 0.6, // lower weight: symbol-name match can be ambiguous
+              });
+              stats.codeLinks++;
+            }
+          }
+        }
+
+        // Per-fact embedding for future dedupe / clustering.
+        if (dedupe) {
+          try {
+            const v = await dedupe.embedText(
+              `${fact.kind}: ${fact.title}\n${fact.summary ?? ''}`,
+            );
+            storeKNodeEmbedding(knowDb, node.id, v, dedupe.modelRef);
+          } catch {
+            // ignore embedding failure
+          }
+        }
+      }
+    }
+  }
+  return stats;
+}

@@ -1,0 +1,7 @@
+{
+  "payload": {
+    "windowId": "wP1",
+    "domain": "debugging",
+    "text": "[user] CI fails: TypeError: Cannot read properties of undefined (reading 'map') at src/api/orders.ts:42\n[assistant] The orders query returns null when there are no orders. Either guard with `orders ?? []` before mapping, or change the query to return `[]` for empty results."
+  }
+}

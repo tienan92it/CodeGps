@@ -1,0 +1,6 @@
+{
+  "payload": {
+    "windowId": "wA",
+    "text": "[user] Should we use Redis or in-memory caching for session storage?\n\n[assistant] Use Redis. We're running multiple app instances behind a load balancer, so in-memory would mean sessions are stuck to one node. Redis lets us share across instances cleanly. Trade-off: extra infra dependency, but we already run Redis for the rate limiter."
+  }
+}

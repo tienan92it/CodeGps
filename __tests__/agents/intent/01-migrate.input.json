@@ -1,0 +1,7 @@
+{
+  "payload": {
+    "windowId": "wI1",
+    "domain": "architecture",
+    "text": "[user] I want to migrate our auth from cookie sessions to JWT this quarter. We need backwards-compat for at least 6 weeks while clients update."
+  }
+}

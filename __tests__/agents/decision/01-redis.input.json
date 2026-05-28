@@ -1,0 +1,7 @@
+{
+  "payload": {
+    "windowId": "wD1",
+    "domain": "architecture",
+    "text": "[user] redis vs in-memory for sessions?\n[assistant] Use Redis: we run multiple app instances behind a load balancer; in-memory pins sessions to one node. We already run Redis for rate limiting so the operational cost is negligible. Trade-off: an extra network hop per session lookup (~1ms locally)."
+  }
+}
