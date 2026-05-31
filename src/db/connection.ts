@@ -42,7 +42,21 @@ function ensureColumn(db: SqliteDb, table: string, column: string, ddl: string):
  */
 function migrateKnowledgeDb(db: SqliteDb): void {
   ensureColumn(db, 'k_nodes', 'grounding', 'grounding TEXT');
+  ensureColumn(db, 'k_nodes', 'scope', 'scope TEXT');
+  ensureColumn(db, 'k_nodes', 'source_url', 'source_url TEXT');
+  ensureColumn(db, 'concepts', 'scope', 'scope TEXT');
+  ensureColumn(db, 'concepts', 'grounding', 'grounding TEXT');
   db.exec(`CREATE INDEX IF NOT EXISTS idx_knodes_grounding ON k_nodes(grounding)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_knodes_scope ON k_nodes(scope)`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS research_cache (
+      query_hash TEXT PRIMARY KEY,
+      query TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      source_url TEXT,
+      fetched_at INTEGER NOT NULL
+    )
+  `);
 }
 
 export function openCodeDb(projectRoot: string): SqliteDb {
@@ -58,8 +72,13 @@ export function openKnowledgeDb(projectRoot: string): SqliteDb {
   return db;
 }
 
+function migrateGlobalDb(db: SqliteDb): void {
+  ensureColumn(db, 'concepts_global', 'scope', 'scope TEXT');
+}
+
 export function openGlobalDb(): SqliteDb {
   const db = open(join(globalConfigDir(), 'global.db'));
   applySchema(db, 'global-schema.sql');
+  migrateGlobalDb(db);
   return db;
 }

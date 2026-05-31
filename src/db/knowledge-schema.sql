@@ -98,7 +98,9 @@ CREATE TABLE IF NOT EXISTS k_nodes (
     confidence REAL NOT NULL,
     source TEXT NOT NULL,
     agent_model TEXT,
-    grounding TEXT,             -- 'stated' | 'structural' | 'corroborated' (NULL => 'stated')
+    grounding TEXT,             -- 'structural'|'stated'|'corroborated'|'external'|'model' (NULL => 'stated')
+    scope TEXT,                 -- 'technical' | 'industry' | 'meta'
+    source_url TEXT,            -- citation when grounding='external'
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     cluster_id TEXT
@@ -106,7 +108,10 @@ CREATE TABLE IF NOT EXISTS k_nodes (
 CREATE INDEX IF NOT EXISTS idx_knodes_kind ON k_nodes(kind);
 CREATE INDEX IF NOT EXISTS idx_knodes_source ON k_nodes(source);
 CREATE INDEX IF NOT EXISTS idx_knodes_cluster ON k_nodes(cluster_id);
-CREATE INDEX IF NOT EXISTS idx_knodes_grounding ON k_nodes(grounding);
+-- NOTE: indexes on grounding/scope are created in migrateKnowledgeDb()
+-- (connection.ts), AFTER ensureColumn adds those columns. They must not live
+-- here: on a legacy DB this CREATE TABLE is a no-op, the columns may be
+-- absent, and an index referencing them would fail before the migration runs.
 
 CREATE VIRTUAL TABLE IF NOT EXISTS k_nodes_fts USING fts5(
     id, title, summary, evidence_text,
@@ -163,8 +168,19 @@ CREATE TABLE IF NOT EXISTS concepts (
     name TEXT NOT NULL,
     summary TEXT,
     domain TEXT,
+    scope TEXT,                 -- 'technical' | 'industry' | 'meta'
+    grounding TEXT,             -- dominant grounding tier across members
     member_count INTEGER NOT NULL,
     embedding BLOB
+);
+
+-- Cache for opt-in external research (keeps default runs offline / idempotent).
+CREATE TABLE IF NOT EXISTS research_cache (
+    query_hash TEXT PRIMARY KEY,
+    query TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    source_url TEXT,
+    fetched_at INTEGER NOT NULL
 );
 
 -- Side-table for k_nodes embeddings (kept separate to leave k_nodes lean and

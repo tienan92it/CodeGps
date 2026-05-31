@@ -20,7 +20,18 @@ import { CLUSTERER_AGENT } from '../agents/clusterer.js';
 import { SUMMARIZER_AGENT } from '../agents/summarizer.js';
 import { DedupeAgent, getKNodeEmbedding } from '../agents/dedupe.js';
 import { upsertConcept, newConceptId, setKNodeCluster, membersOf, nearestConcepts, recountAndCentroid, encodeCentroid } from '../knowledge/concept-store.js';
+import { scopeFromDomain, dominantGrounding, dominantScope } from '../knowledge/scope.js';
+import { mapPool } from '../util/pool.js';
 import type { CodeGpsConfig } from '../config.js';
+
+/**
+ * Leaf/evidence kinds are NOT clustered into concepts — they are citations,
+ * not ideas. Keeps L3 concepts meaningful (decisions, rules, skills, ...).
+ */
+const EVIDENCE_KINDS = [
+  'path_mention', 'code_block', 'shell_command', 'error_message',
+  'stack_trace', 'ticket_id', 'url', 'dependency', 'tool', 'knowledge_gap',
+];
 
 export interface ClusterStats {
   processed: number;
@@ -42,11 +53,12 @@ export async function runClustererForNewFacts(
   let dedupe: DedupeAgent | undefined;
   try { dedupe = new DedupeAgent(cfg); } catch { dedupe = undefined; }
 
-  const where = opts.reCluster ? '' : 'WHERE cluster_id IS NULL';
+  const exclusion = `kind NOT IN (${EVIDENCE_KINDS.map(() => '?').join(',')})`;
+  const where = opts.reCluster ? `WHERE ${exclusion}` : `WHERE cluster_id IS NULL AND ${exclusion}`;
   const facts = knowDb.prepare(`
     SELECT id, kind, title, summary FROM k_nodes ${where}
     ORDER BY created_at ASC
-  `).all() as Array<{ id: string; kind: string; title: string; summary: string | null }>;
+  `).all(...EVIDENCE_KINDS) as Array<{ id: string; kind: string; title: string; summary: string | null }>;
 
   const stats: ClusterStats = { processed: 0, attached: 0, created: 0, merged: 0, conceptsSummarized: 0 };
   const dirty = new Set<string>();
@@ -134,17 +146,16 @@ export async function runClustererForNewFacts(
     dirty.add(touched);
   }
 
-  // Re-centroid + summarize each dirty concept.
-  for (const cid of dirty) {
-    const { memberCount, centroid } = recountAndCentroid(knowDb, cid);
+  // Re-centroid + summarize each dirty concept. Summarizer calls (independent
+  // per concept) run concurrently; persistence stays sequential.
+  const limit = cfg.concurrency ?? 4;
+  const summarized = await mapPool([...dirty], limit, async (cid) => {
     const members = membersOf(knowDb, cid).slice(0, 25);
-
-    let name = '';
+    const currentRow = knowDb.prepare(`SELECT name FROM concepts WHERE id=?`).get(cid) as { name: string } | undefined;
+    let name = currentRow?.name ?? '';
     let summary: string | undefined;
     let domain: string | undefined;
-    const currentRow = knowDb.prepare(`SELECT name FROM concepts WHERE id=?`).get(cid) as { name: string } | undefined;
-    name = currentRow?.name ?? '';
-
+    let didSummarize = false;
     if (members.length > 0) {
       try {
         const out = await rt.run(SUMMARIZER_AGENT, {
@@ -157,15 +168,32 @@ export async function runClustererForNewFacts(
         name = out.output.name || name;
         summary = out.output.summary;
         domain = out.output.domain;
-        stats.conceptsSummarized++;
-      } catch {
-        // leave name/summary as-is on backend failure
-      }
+        didSummarize = true;
+      } catch { /* leave name/summary as-is on backend failure */ }
     }
+    return { cid, name, summary, domain, didSummarize };
+  });
+
+  for (const s of summarized) {
+    const cid = s.cid;
+    const { memberCount, centroid } = recountAndCentroid(knowDb, cid);
+    const name = s.name;
+    const summary = s.summary;
+    const domain = s.domain;
+    if (s.didSummarize) stats.conceptsSummarized++;
+
+    // Place the concept in the scope x grounding matrix. Scope prefers the
+    // members' explicit scope (set by producing agents), falling back to the
+    // triage domain. Grounding is the strongest member tier.
+    const memberMeta = knowDb.prepare(
+      `SELECT grounding, scope FROM k_nodes WHERE cluster_id=?`,
+    ).all(cid) as Array<{ grounding: string | null; scope: string | null }>;
+    const scope = dominantScope(memberMeta.map((m) => m.scope)) ?? scopeFromDomain(domain);
+    const grounding = dominantGrounding(memberMeta.map((m) => m.grounding));
 
     knowDb.prepare(`
-      UPDATE concepts SET name=?, summary=?, domain=?, member_count=?, embedding=? WHERE id=?
-    `).run(name, summary ?? null, domain ?? null, memberCount, centroid ? encodeCentroid(centroid) : null, cid);
+      UPDATE concepts SET name=?, summary=?, domain=?, scope=?, grounding=?, member_count=?, embedding=? WHERE id=?
+    `).run(name, summary ?? null, domain ?? null, scope, grounding, memberCount, centroid ? encodeCentroid(centroid) : null, cid);
   }
 
   return stats;

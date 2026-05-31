@@ -174,6 +174,10 @@ export type KNodeKind =
   | 'pattern'  | 'entity' | 'constraint'
   // domain-enrichment kinds:
   | 'actor' | 'process' | 'metric' | 'glossary_term' | 'knowledge_gap'
+  // technical-profile kinds:
+  | 'dependency' | 'tool' | 'skill'
+  // industry-profile kind:
+  | 'industry'
   // syntax-source kinds (deterministic):
   | 'path_mention' | 'code_block' | 'shell_command'
   | 'error_message' | 'stack_trace' | 'ticket_id' | 'url';
@@ -188,12 +192,31 @@ export type KEdgeKind =
 /**
  * How a fact is grounded in evidence. This is the contract that enforces
  * "based on facts, never assume":
- *   - 'stated'       — explicitly said in a conversation (provenance → window).
  *   - 'structural'   — derived from code structure (provenance → code node).
+ *   - 'stated'       — explicitly said in a conversation (provenance → window).
  *   - 'corroborated' — supported by >=2 independent sources (stated + structural).
+ *   - 'external'     — from a cited external/web source (source_url stored).
+ *   - 'model'        — from the agent's parametric knowledge; an explicit
+ *                      inference with NO project or web evidence.
  * A NULL value (legacy rows) is treated as 'stated'.
+ *
+ * Project-truth = {structural, stated, corroborated}. Enrichment = {external,
+ * model}; always filterable, never silently mixed with project facts.
  */
-export type Grounding = 'stated' | 'structural' | 'corroborated';
+export type Grounding = 'structural' | 'stated' | 'corroborated' | 'external' | 'model';
+
+/** Project-grounded tiers, ordered by objectivity (descending). */
+export const PROJECT_GROUNDING: Grounding[] = ['structural', 'corroborated', 'stated'];
+/** Enrichment tiers — knowledge NOT grounded in the user's own work. */
+export const ENRICHMENT_GROUNDING: Grounding[] = ['external', 'model'];
+
+/**
+ * What kind of knowledge a node/concept represents:
+ *   - 'technical' — skills, technologies, frameworks, architecture, patterns.
+ *   - 'industry'  — business domain: entities, rules, workflows, market.
+ *   - 'meta'      — process/tooling/uncategorized.
+ */
+export type Scope = 'technical' | 'industry' | 'meta';
 
 export interface KNode {
   id: string;
@@ -205,6 +228,8 @@ export interface KNode {
   source: string;         // 'syntax' | 'agent:<name>' | 'structural:code' | 'manual'
   agentModel?: string;
   grounding?: Grounding;
+  scope?: Scope;
+  sourceUrl?: string;     // citation when grounding='external'
   createdAt: number;
   updatedAt: number;
   clusterId?: string;
@@ -275,8 +300,37 @@ export interface Concept {
   name: string;
   summary?: string;
   domain?: Domain;
+  scope?: Scope;
+  grounding?: Grounding;   // dominant tier across members
   memberCount: number;
   embedding?: Buffer;
+}
+
+// =============================================================================
+// L5 — Skill graph (global "second brain")
+// =============================================================================
+
+export interface Skill {
+  id: string;
+  name: string;
+  scope: Scope;
+  kind: string;            // 'language' | 'framework' | 'infra' | 'domain' | 'pattern' | ...
+  evidenceWeight: number;  // aggregated across projects
+  grounding: Grounding;    // strongest tier supporting it
+  projectCount: number;
+}
+
+export interface TechnicalProfile {
+  languages: Array<{ name: string; weight: number }>;
+  frameworks: string[];
+  infrastructure: string[];
+  patterns: string[];
+}
+
+export interface IndustryProfile {
+  industry: string;
+  confidence: number;
+  domains: string[];
 }
 
 // =============================================================================

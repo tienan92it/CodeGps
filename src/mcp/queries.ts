@@ -50,19 +50,35 @@ export interface FactRow {
   windowId?: string;
 }
 
+export interface RecallOpts {
+  kinds?: string[];
+  scope?: string;
+  /** Include enrichment tiers (external, model). Default false = project-truth only. */
+  includeEnrichment?: boolean;
+}
+
 export function recallByQuery(
   knowDb: SqliteDb, query: string, limit = 20,
-  kinds?: string[],
+  optsOrKinds?: string[] | RecallOpts,
 ): FactRow[] {
+  const opts: RecallOpts = Array.isArray(optsOrKinds) ? { kinds: optsOrKinds } : (optsOrKinds ?? {});
+  const { kinds, scope, includeEnrichment } = opts;
+
   const kindClause = kinds && kinds.length
     ? `AND k.kind IN (${kinds.map(() => '?').join(',')})`
     : '';
+  const scopeClause = scope ? `AND k.scope = ?` : '';
+  // Project-truth default: exclude enrichment tiers (external/model).
+  const groundingClause = includeEnrichment
+    ? ''
+    : `AND COALESCE(k.grounding,'stated') NOT IN ('external','model')`;
   const ftsClause = query.trim()
     ? `AND k.id IN (SELECT k_nodes_fts.id FROM k_nodes_fts WHERE k_nodes_fts MATCH ?)`
     : '';
-  // Bind order must match SQL: kinds clause precedes fts clause below.
+  // Bind order must match the SQL clause order below.
   const args: any[] = [];
   if (kinds && kinds.length) args.push(...kinds);
+  if (scope) args.push(scope);
   if (ftsClause) args.push(escapeFtsQuery(query));
   args.push(limit);
 
@@ -70,7 +86,7 @@ export function recallByQuery(
     SELECT k.id, k.kind, k.title, k.summary, k.confidence, k.source,
            (SELECT window_id FROM k_provenance WHERE k_node_id = k.id LIMIT 1) AS windowId
     FROM k_nodes k
-    WHERE 1=1 ${kindClause} ${ftsClause}
+    WHERE 1=1 ${kindClause} ${scopeClause} ${groundingClause} ${ftsClause}
     ORDER BY k.confidence DESC, k.updated_at DESC
     LIMIT ?
   `).all(...args) as FactRow[];

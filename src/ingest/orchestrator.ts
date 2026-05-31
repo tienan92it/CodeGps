@@ -162,7 +162,7 @@ export async function ingestProject(root: string, opts: IngestOpts = {}): Promis
     //    extraction depends on the code graph (updated by `sync`, not ingest),
     //    and is idempotent. Skip only when explicitly disabled.
     if (opts.runEnrich !== false) {
-      const enrich = await runEnrichment(knowDb, codeDb, cfg, { noAgent: opts.runExtract === false });
+      const enrich = await runEnrichment(root, knowDb, codeDb, cfg, { noAgent: opts.runExtract === false });
       stats.domainEntities = enrich.structuralEntities;
       stats.domainRelationships = enrich.structuralRelationships + enrich.agentRelationships;
       stats.knowledgeGaps = enrich.detectedGaps + enrich.agentGaps;

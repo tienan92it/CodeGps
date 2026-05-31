@@ -17,9 +17,20 @@ export interface AgentSpec {
   windowTokens?: number;
 }
 
+export interface ResearchConfig {
+  /** 'none' (offline default) or 'search-api'. */
+  kind?: 'none' | 'search-api';
+  endpoint?: string;
+  apiKeyEnv?: string;
+}
+
 export interface CodeGpsConfig {
   agentBackends: Record<string, AgentBackend>;
   agents: Record<string, AgentSpec>;
+  /** Max concurrent agent (LLM) calls in the pipeline. 1 = serial. Default 4. */
+  concurrency?: number;
+  /** Opt-in external research backend for industry enrichment. Off by default. */
+  research?: ResearchConfig;
   /** Paths for cross-agent transcript discovery; resolved with ~ expansion. */
   transcriptRoots?: {
     cursor?: string;
@@ -44,7 +55,14 @@ export const DEFAULT_CONFIG: CodeGpsConfig = {
     summarizer:     { model: 'default:llama3.1:8b' },
     linker:         { model: 'default:llama3.1:8b' },
     verifier:       { model: 'default:llama3.1:8b' },
+    domainModeler:  { model: 'default:llama3.1:8b' },
+    technicalProfiler: { model: 'default:llama3.1:8b' },
+    industryClassifier:{ model: 'default:llama3.1:8b' },
+    industryEnricher:  { model: 'default:llama3.1:8b' },
+    skillSynthesizer:  { model: 'default:llama3.1:8b' },
   },
+  concurrency: 4,
+  research: { kind: 'none' },
   transcriptRoots: {
     cursor: '~/.cursor/projects',
     claudeCode: '~/.claude/projects',

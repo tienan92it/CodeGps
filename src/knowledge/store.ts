@@ -8,19 +8,34 @@ export function upsertKNode(db: SqliteDb, n: KNode): void {
   db.prepare(`
     INSERT INTO k_nodes
       (id, kind, title, summary, evidence_text, confidence, source, agent_model,
-       grounding, created_at, updated_at, cluster_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       grounding, scope, source_url, created_at, updated_at, cluster_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title=excluded.title, summary=excluded.summary,
       evidence_text=excluded.evidence_text, confidence=excluded.confidence,
       source=excluded.source, agent_model=excluded.agent_model,
-      grounding=excluded.grounding,
+      grounding=excluded.grounding, scope=excluded.scope,
+      source_url=excluded.source_url,
       updated_at=excluded.updated_at
   `).run(
     n.id, n.kind, n.title, n.summary ?? null, n.evidenceText ?? null,
     n.confidence, n.source, n.agentModel ?? null,
-    n.grounding ?? null, n.createdAt, n.updatedAt, n.clusterId ?? null,
+    n.grounding ?? null, n.scope ?? null, n.sourceUrl ?? null,
+    n.createdAt, n.updatedAt, n.clusterId ?? null,
   );
+}
+
+/** Set grounding/scope on an existing fact (used by reconciliation/enrichment). */
+export function setGroundingScope(
+  db: SqliteDb, id: string, grounding?: string, scope?: string,
+): void {
+  db.prepare(`
+    UPDATE k_nodes SET
+      grounding = COALESCE(?, grounding),
+      scope     = COALESCE(?, scope),
+      updated_at = ?
+    WHERE id = ?
+  `).run(grounding ?? null, scope ?? null, Date.now(), id);
 }
 
 /** Insert a k_edge only if an identical (source, target, kind) edge doesn't exist. */

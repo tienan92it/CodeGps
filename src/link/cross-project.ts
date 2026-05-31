@@ -7,16 +7,21 @@ import { exportProjectConcepts, globalConceptId } from './export.js';
 import { runMechanicalLinking } from './mechanical.js';
 import { runSemanticLinking } from './semantic.js';
 import { projectIdForPath } from '../global/registry.js';
+import { exportProjectSkills, synthesizeSkills } from '../global/skills.js';
 
 export interface LinkStats {
   exported: number;
   mechanical: number;
   semantic: number;
+  skills: number;
+  crossProjectSkills: number;
 }
 
 export async function rebuildLinks(root: string, opts: { full?: boolean } = {}): Promise<LinkStats> {
   const cfg = loadConfig(root);
   const exp = await exportProjectConcepts(root);
+  // Export this project's technical-skill evidence + industries into global.db.
+  await exportProjectSkills(root);
   const gdb = openGlobalDb();
   try {
     if (opts.full) {
@@ -30,10 +35,14 @@ export async function rebuildLinks(root: string, opts: { full?: boolean } = {}):
     } catch {
       // Backend down: mechanical-only result is still useful.
     }
+    // Aggregate skill evidence across all projects into the global skill graph.
+    const synth = synthesizeSkills(gdb);
     return {
       exported: exp.conceptsExported,
       mechanical: mech.linksWritten,
       semantic,
+      skills: synth.skills,
+      crossProjectSkills: synth.crossProject,
     };
   } finally {
     gdb.close();

@@ -15,5 +15,6 @@ export function registerLink(program: Command): void {
       console.log(`  Concepts exported: ${stats.exported}`);
       console.log(`  Mechanical links:  ${stats.mechanical}`);
       console.log(`  Agent links:       ${stats.semantic}`);
+      console.log(`  Skills (global):   ${stats.skills} (${stats.crossProjectSkills} cross-project)`);
     });
 }

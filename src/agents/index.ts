@@ -12,6 +12,9 @@ import './summarizer.js';
 import './linker.js';
 import './verifier.js';
 import './domain-modeler.js';
+import './technical-profiler.js';
+import './industry-classifier.js';
+import './industry-enricher.js';
 // Dedupe is not a chat agent and self-registers when constructed.
 
 export { ALL_AGENTS, getAgent, registerAgent } from './registry.js';

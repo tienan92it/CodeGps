@@ -18,6 +18,8 @@ import { listCrossProjectLinks } from '../link/cross-project.js';
 import { runVerify } from '../pipeline/verify.js';
 import { runEnrichment } from '../pipeline/enrich.js';
 import { listEntities, relationshipsFor, listGaps } from '../knowledge/domain-store.js';
+import { listSkills, listIndustries } from '../global/skills.js';
+import { openGlobalDb } from '../db/connection.js';
 import { loadConfig } from '../config.js';
 import { ingestProject } from '../ingest/orchestrator.js';
 import { syncProject } from '../code/sync.js';
@@ -116,17 +118,18 @@ export async function startMcpServer(root: string): Promise<void> {
 
   server.tool(
     'codegps_recall',
-    'Semantic + FTS query across past conversations. Returns matching facts.',
+    'Semantic + FTS query across past conversations. Returns matching facts. Defaults to project-truth grounding (structural/stated/corroborated); set includeEnrichment to also surface model/web-sourced knowledge.',
     {
       query: z.string(),
       kinds: z.array(z.string()).optional(),
-      includeDropped: z.boolean().optional(),
+      scope: z.enum(['technical', 'industry', 'meta']).optional(),
+      includeEnrichment: z.boolean().optional(),
       limit: z.number().optional(),
     },
-    async ({ query, kinds, limit }) => {
+    async ({ query, kinds, scope, includeEnrichment, limit }) => {
       const db = openKnowledgeDb(root);
       try {
-        const facts = recallByQuery(db, query, limit ?? 20, kinds);
+        const facts = recallByQuery(db, query, limit ?? 20, { kinds, scope, includeEnrichment });
         return text(formatFacts(facts));
       } finally { db.close(); }
     },
@@ -340,15 +343,70 @@ export async function startMcpServer(root: string): Promise<void> {
 
   server.tool(
     'codegps_enrich',
-    'Run the domain enrichment pass: structural entities + relationships from code, plus evidence-grounded gaps.',
+    'Run the enrichment pass: technical skills + structural domain entities/relationships + industry classification + evidence-grounded gaps.',
     { noAgent: z.boolean().optional() },
     async ({ noAgent }) => {
       const code = openCodeDb(root);
       const know = openKnowledgeDb(root);
       try {
-        const stats = await runEnrichment(know, code, loadConfig(root), { noAgent });
+        const stats = await runEnrichment(root, know, code, loadConfig(root), { noAgent });
         return text(JSON.stringify(stats, null, 2));
       } finally { code.close(); know.close(); }
+    },
+  );
+
+  server.tool(
+    'codegps_skills',
+    'Global skill graph: technical + industry skills aggregated across all projects, weighted by evidence and grounding. project_count > 1 means cross-project.',
+    { scope: z.enum(['technical', 'industry']).optional(), cross: z.boolean().optional(), limit: z.number().optional() },
+    async ({ scope, cross, limit }) => {
+      const gdb = openGlobalDb();
+      try {
+        const skills = listSkills(gdb, { scope, crossOnly: cross, limit: limit ?? 80 });
+        if (skills.length === 0) return text('No skills yet. Run `codegps enrich` then `codegps link` per project.');
+        return text(skills.map((s) =>
+          `- ${s.name}  · w=${s.evidenceWeight.toFixed(1)} · ×${s.projectCount} · ${s.grounding}`,
+        ).join('\n'));
+      } finally { gdb.close(); }
+    },
+  );
+
+  server.tool(
+    'codegps_profile',
+    'Big-picture knowledge profile across all projects: industries, top technical skills, evidence mix. The "second brain" summary.',
+    {},
+    async () => {
+      const gdb = openGlobalDb();
+      try {
+        const projects = (gdb.prepare(`SELECT COUNT(*) AS n FROM projects`).get() as any).n;
+        const industries = listIndustries(gdb);
+        const tech = listSkills(gdb, { scope: 'technical', limit: 25 });
+        return text(
+          `# Knowledge profile\n\nProjects: ${projects}\n\n` +
+          `## Industries\n` + (industries.length ? industries.map((i) => `- ${i.name} (×${i.projectCount}, conf ${i.confidence.toFixed(2)})`).join('\n') : '_(none)_') +
+          `\n\n## Top technical skills\n` + (tech.length ? tech.map((s) => `- ${s.name} (w=${s.evidenceWeight.toFixed(1)}, ×${s.projectCount}, ${s.grounding})`).join('\n') : '_(none)_'),
+        );
+      } finally { gdb.close(); }
+    },
+  );
+
+  server.tool(
+    'codegps_learn',
+    'Learning targets: industry-standard knowledge (grounding model/external) not yet grounded in your own work. General knowledge, NOT facts about this project.',
+    { limit: z.number().optional() },
+    async ({ limit }) => {
+      const db = openKnowledgeDb(root);
+      try {
+        const rows = db.prepare(`
+          SELECT title, summary, grounding, source_url FROM k_nodes
+          WHERE scope='industry' AND COALESCE(grounding,'stated') IN ('model','external')
+          ORDER BY grounding DESC, title LIMIT ?
+        `).all(limit ?? 40) as Array<{ title: string; summary: string | null; grounding: string; source_url: string | null }>;
+        if (rows.length === 0) return text('No learning targets. Run `codegps enrich` (needs an LLM) to surface industry-standard knowledge.');
+        return text(rows.map((r) =>
+          `- [${r.grounding}] ${r.title}` + (r.summary ? `\n    ${r.summary}` : '') + (r.source_url ? `\n    source: ${r.source_url}` : ''),
+        ).join('\n'));
+      } finally { db.close(); }
     },
   );
 

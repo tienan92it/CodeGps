@@ -12,14 +12,15 @@ export function newConceptId(seed: string): string {
 
 export function upsertConcept(db: SqliteDb, c: Concept): void {
   db.prepare(`
-    INSERT INTO concepts (id, name, summary, domain, member_count, embedding)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO concepts (id, name, summary, domain, scope, grounding, member_count, embedding)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name=excluded.name, summary=excluded.summary,
-      domain=excluded.domain, member_count=excluded.member_count,
-      embedding=excluded.embedding
+      domain=excluded.domain, scope=excluded.scope, grounding=excluded.grounding,
+      member_count=excluded.member_count, embedding=excluded.embedding
   `).run(
     c.id, c.name, c.summary ?? null, c.domain ?? null,
+    c.scope ?? null, c.grounding ?? null,
     c.memberCount, c.embedding ?? null,
   );
 }
@@ -31,6 +32,8 @@ export function getConcept(db: SqliteDb, id: string): Concept | undefined {
     id: row.id, name: row.name,
     summary: row.summary ?? undefined,
     domain: row.domain ?? undefined,
+    scope: row.scope ?? undefined,
+    grounding: row.grounding ?? undefined,
     memberCount: row.member_count,
     embedding: row.embedding ?? undefined,
   };
@@ -46,6 +49,8 @@ export function listConcepts(db: SqliteDb, domain?: string, limit = 50): Concept
     id: r.id, name: r.name,
     summary: r.summary ?? undefined,
     domain: r.domain ?? undefined,
+    scope: r.scope ?? undefined,
+    grounding: r.grounding ?? undefined,
     memberCount: r.member_count,
     embedding: r.embedding ?? undefined,
   }));

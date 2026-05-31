@@ -180,7 +180,7 @@ describe('full enrichment (no agent)', () => {
     const knowDb = openKnowledgeDb(root);
     try {
       const cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
-      const stats = await runEnrichment(knowDb, codeDb, cfg, { noAgent: true });
+      const stats = await runEnrichment(root, knowDb, codeDb, cfg, { noAgent: true });
       expect(stats.structuralEntities).toBe(3);
       expect(stats.structuralRelationships).toBe(3);
       expect(stats.detectedGaps).toBeGreaterThanOrEqual(1);
@@ -217,7 +217,7 @@ describe('full enrichment (no agent)', () => {
         return { output: {}, confidence: 0, model: 'fake', cached: false } as any;
       };
       try {
-        const stats = await runEnrichment(knowDb, codeDb, cfg, {});
+        const stats = await runEnrichment(root, knowDb, codeDb, cfg, {});
         expect(stats.agentRelationships).toBe(1);
         expect(stats.agentGaps).toBe(1);
         // the stated relationship is persisted with grounding 'stated'

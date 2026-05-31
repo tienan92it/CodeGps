@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS concepts_global (
     name TEXT NOT NULL,
     summary TEXT,
     domain TEXT,
+    scope TEXT,
     embedding BLOB,
     updated_at INTEGER NOT NULL
 );
@@ -43,3 +44,37 @@ CREATE TABLE IF NOT EXISTS concept_links (
 CREATE INDEX IF NOT EXISTS idx_link_a ON concept_links(a, kind);
 CREATE INDEX IF NOT EXISTS idx_link_b ON concept_links(b, kind);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_link_unique ON concept_links(a, b, kind, source);
+
+-- L5: global skill graph (the "second brain" aggregation across projects)
+CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL,           -- 'technical' | 'industry'
+    kind TEXT,                     -- 'language' | 'framework' | 'library' | 'infra' | 'domain' | ...
+    evidence_weight REAL NOT NULL DEFAULT 0,
+    grounding TEXT,                -- strongest tier supporting it
+    project_count INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope);
+CREATE INDEX IF NOT EXISTS idx_skills_weight ON skills(evidence_weight);
+
+CREATE TABLE IF NOT EXISTS skill_evidence (
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_name TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 1,
+    grounding TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_ev_unique ON skill_evidence(skill_id, project_id, source_name);
+CREATE INDEX IF NOT EXISTS idx_skill_ev_project ON skill_evidence(project_id);
+
+CREATE TABLE IF NOT EXISTS industries (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    confidence REAL,
+    grounding TEXT,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_industries_project ON industries(project_id);

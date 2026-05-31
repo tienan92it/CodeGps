@@ -49,6 +49,10 @@ export function registerStatus(program: Command): void {
         console.log(`    entities:      ${knowStats.entities}`);
         console.log(`    relationships: ${knowStats.relationships}`);
         console.log(`    knowledge gaps: ${knowStats.gaps}`);
+        console.log('  By scope:');
+        for (const r of byGroup(know, 'scope')) console.log(`    ${(r.k ?? 'untagged').padEnd(12)} ${r.n}`);
+        console.log('  By grounding:');
+        for (const r of byGroup(know, 'grounding')) console.log(`    ${(r.k ?? 'stated').padEnd(12)} ${r.n}`);
         console.log('  L3 concepts: ', knowStats.concepts);
         console.log('  Agent runs:  ', knowStats.agentRuns);
       } finally {
@@ -61,4 +65,8 @@ export function registerStatus(program: Command): void {
 function count(db: any, fromClause: string): number {
   const row = db.prepare(`SELECT COUNT(*) AS n FROM ${fromClause}`).get();
   return row?.n ?? 0;
+}
+
+function byGroup(db: any, column: string): Array<{ k: string | null; n: number }> {
+  return db.prepare(`SELECT ${column} AS k, COUNT(*) AS n FROM k_nodes GROUP BY ${column} ORDER BY n DESC`).all() as Array<{ k: string | null; n: number }>;
 }

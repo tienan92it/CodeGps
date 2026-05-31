@@ -16,13 +16,17 @@ export function registerEnrich(program: Command): void {
       const codeDb = openCodeDb(root);
       const knowDb = openKnowledgeDb(root);
       try {
-        const stats = await runEnrichment(knowDb, codeDb, cfg, { noAgent: opts.agent === false });
-        console.log(`Domain enrichment complete:`);
-        console.log(`  Structural entities:    ${stats.structuralEntities} (+ ${stats.externalEntities} external)`);
+        const stats = await runEnrichment(root, knowDb, codeDb, cfg, { noAgent: opts.agent === false });
+        console.log(`Enrichment complete:`);
+        console.log(`  Dependencies / tools:     ${stats.dependencies} / ${stats.tools}`);
+        console.log(`  Technical skills:         ${stats.technicalSkills}`);
+        console.log(`  Structural entities:      ${stats.structuralEntities} (+ ${stats.externalEntities} external)`);
         console.log(`  Structural relationships: ${stats.structuralRelationships}`);
-        console.log(`  Agent relationships:    ${stats.agentRelationships}`);
-        console.log(`  Agent gaps:             ${stats.agentGaps}`);
-        console.log(`  Detected gaps:          ${stats.detectedGaps}`);
+        console.log(`  Reconciled (corroborated): ${stats.reconciledEntities}`);
+        console.log(`  Agent relationships:      ${stats.agentRelationships}`);
+        console.log(`  Industry:                 ${stats.industry ?? '(unclassified)'}`);
+        console.log(`  Industry-standard items:  ${stats.industryConcepts} (${stats.externalUpgrades} web-cited)`);
+        console.log(`  Gaps (agent / detected):  ${stats.agentGaps} / ${stats.detectedGaps}`);
       } finally {
         codeDb.close();
         knowDb.close();
