@@ -13,7 +13,7 @@
  */
 import type { Database as SqliteDb } from 'better-sqlite3';
 import type { CodeGpsConfig } from '../config.js';
-import { parseModelRef } from '../config.js';
+import { parseModelRef, resolveApiKey } from '../config.js';
 import { OllamaBackend } from './backends/ollama.js';
 import { OpenAIBackend } from './backends/openai.js';
 import type { Backend } from './backends/base.js';
@@ -48,7 +48,7 @@ export class DedupeAgent {
       case 'openai-compatible':
         this.backend = new OpenAIBackend({
           endpoint: bspec.endpoint ?? 'https://api.openai.com/v1',
-          apiKey: bspec.apiKeyEnv ? process.env[bspec.apiKeyEnv] : undefined,
+          apiKey: resolveApiKey(bspec),
         });
         break;
       default:

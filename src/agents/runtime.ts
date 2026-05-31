@@ -13,7 +13,7 @@ import { createHash, randomUUID } from 'crypto';
 import type { Database as SqliteDb } from 'better-sqlite3';
 import type { CodeGpsConfig } from '../config.js';
 import { parseModelRef } from '../config.js';
-import type { AgentBackend as BackendSpec } from '../config.js';
+import { type AgentBackend as BackendSpec, resolveApiKey } from '../config.js';
 import type { Backend, ChatMessage } from './backends/base.js';
 import { OllamaBackend } from './backends/ollama.js';
 import { OpenAIBackend } from './backends/openai.js';
@@ -192,7 +192,7 @@ export class AgentRuntime {
       case 'openai-compatible':
         b = new OpenAIBackend({
           endpoint: spec.endpoint ?? 'https://api.openai.com/v1',
-          apiKey: spec.apiKeyEnv ? process.env[spec.apiKeyEnv] : undefined,
+          apiKey: resolveApiKey(spec),
         });
         break;
       case 'anthropic':

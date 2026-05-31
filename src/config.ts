@@ -7,7 +7,23 @@ export type BackendKind = 'ollama' | 'openai-compatible' | 'anthropic';
 export interface AgentBackend {
   kind: BackendKind;
   endpoint?: string;
+  /** Name of the env var holding the API key (preferred — keeps secrets out of the file). */
   apiKeyEnv?: string;
+  /** Inline API key. Convenient, but stored in plaintext — prefer apiKeyEnv. */
+  apiKey?: string;
+}
+
+/**
+ * Resolve an API key from a backend spec. Inline `apiKey` wins; otherwise read
+ * the env var named by `apiKeyEnv`. Guards against the common mistake of pasting
+ * a raw key (sk-...) into `apiKeyEnv` by treating key-shaped values as inline.
+ */
+export function resolveApiKey(spec: { apiKey?: string; apiKeyEnv?: string }): string | undefined {
+  if (spec.apiKey) return spec.apiKey;
+  const ref = spec.apiKeyEnv;
+  if (!ref) return undefined;
+  if (/^sk-|^or-|\s/.test(ref) || ref.length > 60) return ref; // looks like a key, not a var name
+  return process.env[ref];
 }
 
 export interface AgentSpec {

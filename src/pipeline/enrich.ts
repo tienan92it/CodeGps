@@ -101,7 +101,7 @@ export async function runEnrichment(
 
     // ── 6. IndustryClassifier (industry scope) ─────────────────────────
     try {
-      const ind = await runIndustryClassifier(knowDb, root, cfg);
+      const ind = await runIndustryClassifier(knowDb, codeDb, root, cfg);
       stats.industry = ind.industry;
     } catch { /* ignore */ }
 
@@ -242,10 +242,33 @@ async function runDomainModeler(
 }
 
 async function runIndustryClassifier(
-  knowDb: SqliteDb, root: string, cfg: CodeGpsConfig,
+  knowDb: SqliteDb, codeDb: SqliteDb, root: string, cfg: CodeGpsConfig,
 ): Promise<{ industry?: string }> {
   const entities = (knowDb.prepare(`SELECT DISTINCT title FROM k_nodes WHERE kind='entity' LIMIT 80`).all() as Array<{ title: string }>).map((r) => r.title);
   const rules = (knowDb.prepare(`SELECT title, summary FROM k_nodes WHERE kind IN ('business_rule','constraint') LIMIT 40`).all() as Array<{ title: string; summary: string | null }>).map((r) => r.summary ? `${r.title}: ${r.summary}` : r.title);
+  const dependencies = (knowDb.prepare(`SELECT title FROM k_nodes WHERE kind='dependency' LIMIT 80`).all() as Array<{ title: string }>).map((r) => r.title);
+
+  // Notable code symbols as domain signal (works for FE and non-SQL projects):
+  // classes, modules, SQL tables, and exported functions — which cover React
+  // components / hooks / page handlers. Skip files / imports / fields (noise).
+  const symbols = (codeDb.prepare(`
+    SELECT DISTINCT name FROM nodes
+    WHERE kind IN ('class','module','table')
+       OR (kind = 'function' AND is_exported = 1)
+    ORDER BY name LIMIT 120
+  `).all() as Array<{ name: string }>).map((r) => r.name);
+
+  // package.json name + description, if present.
+  let projectName: string | undefined;
+  let description: string | undefined;
+  try {
+    const pkgPath = join(root, 'package.json');
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+      projectName = typeof pkg.name === 'string' ? pkg.name : undefined;
+      description = typeof pkg.description === 'string' ? pkg.description : undefined;
+    }
+  } catch { /* ignore */ }
 
   let readme: string | undefined;
   for (const name of ['README.md', 'readme.md', 'README', 'README.markdown']) {
@@ -253,11 +276,17 @@ async function runIndustryClassifier(
     if (existsSync(p)) { try { readme = readFileSync(p, 'utf8'); } catch { /* ignore */ } break; }
   }
 
-  // Nothing to classify on.
-  if (!readme && entities.length === 0 && rules.length === 0) return {};
+  // Classify from ANY available signal. Only bail when there is truly nothing.
+  if (!readme && !projectName && !description &&
+      entities.length === 0 && rules.length === 0 &&
+      dependencies.length === 0 && symbols.length === 0) {
+    return {};
+  }
 
   const rt = new AgentRuntime({ knowledgeDb: knowDb, config: cfg });
-  const out = await rt.run(INDUSTRY_CLASSIFIER_AGENT, { payload: { readme, entities, businessRules: rules } });
+  const out = await rt.run(INDUSTRY_CLASSIFIER_AGENT, {
+    payload: { readme, projectName, description, dependencies, symbols, entities, businessRules: rules },
+  });
   const o = out.output;
   if (!o.industry || o.industry.toLowerCase() === 'unknown') return {};
 

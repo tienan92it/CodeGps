@@ -1,14 +1,16 @@
 /**
  * Manifest + infrastructure parser — deterministic, zero-assumption.
  *
- * Reads dependency manifests and infra files from the project root and emits
- * `dependency` and `tool` facts (scope='technical', grounding='structural',
- * source='structural:manifest'). These are leaf evidence — the raw material
- * the TechnicalProfiler agent synthesizes into skill concepts. A declared
- * dependency is an objective fact; no inference.
+ * Walks the project (depth-limited, skipping heavy dirs) and reads every
+ * dependency manifest and infra file it finds — root OR nested, so monorepos
+ * (e.g. a Flutter app + a web frontend under one repo) are fully covered. It
+ * emits `dependency` and `tool` facts (scope='technical',
+ * grounding='structural', source='structural:manifest'). These are leaf
+ * evidence — the raw material the TechnicalProfiler synthesizes into skills. A
+ * declared dependency is an objective fact; no inference.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
+import { join, relative, basename } from 'path';
 import { createHash } from 'crypto';
 import type { Database as SqliteDb } from 'better-sqlite3';
 import type { KNode, KNodeKind } from '../types.js';
@@ -25,27 +27,27 @@ interface RawFact {
   evidence: string;
 }
 
+type Add = (kind: KNodeKind, name: string, evidence: string) => void;
+
+const MAX_DEPTH = 4;
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.codegps', '.dart_tool',
+  '.next', '.nuxt', 'vendor', 'Pods', 'target', '.venv', 'venv', '__pycache__',
+]);
+
 export function runManifestParser(knowDb: SqliteDb, root: string): ManifestStats {
   const facts = new Map<string, RawFact>();   // dedup by kind+name
-  const add = (kind: KNodeKind, name: string, evidence: string) => {
+  const add: Add = (kind, name, evidence) => {
     const n = name.trim();
     if (!n) return;
     const key = `${kind}|${n.toLowerCase()}`;
     if (!facts.has(key)) facts.set(key, { kind, name: n, evidence });
   };
 
-  parsePackageJson(root, add);
-  parseRequirements(root, add);
-  parsePyproject(root, add);
-  parseGoMod(root, add);
-  parseCargo(root, add);
-  parsePubspec(root, add);
-  parseComposer(root, add);
-  parseGemfile(root, add);
-  parsePomXml(root, add);
-  parseGradle(root, add);
-  parseCsproj(root, add);
-  detectInfra(root, add);
+  for (const abs of walkManifests(root, add)) {
+    const rel = relative(root, abs) || basename(abs);
+    routeFile(abs, rel, add);
+  }
 
   const stats: ManifestStats = { dependencies: 0, tools: 0 };
   const now = Date.now();
@@ -67,124 +69,122 @@ export function runManifestParser(knowDb: SqliteDb, root: string): ManifestStats
   return stats;
 }
 
-type Add = (kind: KNodeKind, name: string, evidence: string) => void;
+/** Dispatch one file to the right parser by its basename. */
+function routeFile(abs: string, rel: string, add: Add): void {
+  const name = basename(abs);
+  const raw = readSafe(abs);
 
-function readIf(root: string, rel: string): string | undefined {
-  const p = join(root, rel);
-  if (!existsSync(p)) return undefined;
-  try { return readFileSync(p, 'utf8'); } catch { return undefined; }
+  // Infra / tooling is detected by filename alone (content optional).
+  detectInfra(name, rel, add);
+
+  if (!raw) return;
+  switch (name) {
+    case 'package.json':     parsePackageJson(raw, rel, add); break;
+    case 'requirements.txt': parseRequirements(raw, rel, add); break;
+    case 'pyproject.toml':   parsePyproject(raw, rel, add); break;
+    case 'go.mod':           parseGoMod(raw, rel, add); break;
+    case 'Cargo.toml':       parseCargo(raw, rel, add); break;
+    case 'pubspec.yaml':     parsePubspec(raw, rel, add); break;
+    case 'composer.json':    parseComposer(raw, rel, add); break;
+    case 'Gemfile':          parseGemfile(raw, rel, add); break;
+    case 'pom.xml':          parsePomXml(raw, rel, add); break;
+    case 'build.gradle':
+    case 'build.gradle.kts': parseGradle(raw, rel, add); break;
+    default:
+      if (name.endsWith('.csproj')) parseCsproj(raw, rel, add);
+      break;
+  }
 }
 
-function parsePackageJson(root: string, add: Add): void {
-  const raw = readIf(root, 'package.json');
-  if (!raw) return;
+function readSafe(abs: string): string | undefined {
+  try { return readFileSync(abs, 'utf8'); } catch { return undefined; }
+}
+
+function parsePackageJson(raw: string, rel: string, add: Add): void {
   let pkg: any;
   try { pkg = JSON.parse(raw); } catch { return; }
   for (const section of ['dependencies', 'devDependencies', 'peerDependencies']) {
     const deps = pkg[section];
     if (deps && typeof deps === 'object') {
-      for (const name of Object.keys(deps)) add('dependency', name, `package.json (${section}): ${name}@${deps[name]}`);
+      for (const name of Object.keys(deps)) add('dependency', name, `${rel} (${section}): ${name}@${deps[name]}`);
     }
   }
 }
 
-function parseRequirements(root: string, add: Add): void {
-  const raw = readIf(root, 'requirements.txt');
-  if (!raw) return;
+function parseRequirements(raw: string, rel: string, add: Add): void {
   for (const line of raw.split('\n')) {
     const t = line.trim();
     if (!t || t.startsWith('#') || t.startsWith('-')) continue;
     const name = t.split(/[=<>!~\[ ]/)[0];
-    if (name) add('dependency', name, `requirements.txt: ${t}`);
+    if (name) add('dependency', name, `${rel}: ${t}`);
   }
 }
 
-function parsePyproject(root: string, add: Add): void {
-  const raw = readIf(root, 'pyproject.toml');
-  if (!raw) return;
-  // [project] dependencies = ["pkg>=1", ...] or [tool.poetry.dependencies]
+function parsePyproject(raw: string, rel: string, add: Add): void {
   const arrMatch = raw.match(/dependencies\s*=\s*\[([\s\S]*?)\]/);
   if (arrMatch) {
     for (const m of arrMatch[1].matchAll(/["']([A-Za-z0-9_.\-]+)/g)) {
-      add('dependency', m[1], `pyproject.toml: ${m[1]}`);
+      add('dependency', m[1], `${rel}: ${m[1]}`);
     }
   }
   const poetry = raw.match(/\[tool\.poetry\.dependencies\]([\s\S]*?)(\n\[|$)/);
   if (poetry) {
     for (const m of poetry[1].matchAll(/^\s*([A-Za-z0-9_.\-]+)\s*=/gm)) {
-      if (m[1].toLowerCase() !== 'python') add('dependency', m[1], `pyproject.toml (poetry): ${m[1]}`);
+      if (m[1].toLowerCase() !== 'python') add('dependency', m[1], `${rel} (poetry): ${m[1]}`);
     }
   }
 }
 
-function parseGoMod(root: string, add: Add): void {
-  const raw = readIf(root, 'go.mod');
-  if (!raw) return;
+function parseGoMod(raw: string, rel: string, add: Add): void {
   for (const m of raw.matchAll(/^\s*([a-z0-9.\-]+\/[^\s]+)\s+v[0-9]/gm)) {
-    add('dependency', m[1], `go.mod: ${m[1]}`);
+    add('dependency', m[1], `${rel}: ${m[1]}`);
   }
 }
 
-function parseCargo(root: string, add: Add): void {
-  const raw = readIf(root, 'Cargo.toml');
-  if (!raw) return;
+function parseCargo(raw: string, rel: string, add: Add): void {
   const dep = raw.match(/\[dependencies\]([\s\S]*?)(\n\[|$)/);
   if (dep) {
-    for (const m of dep[1].matchAll(/^\s*([A-Za-z0-9_\-]+)\s*=/gm)) add('dependency', m[1], `Cargo.toml: ${m[1]}`);
+    for (const m of dep[1].matchAll(/^\s*([A-Za-z0-9_\-]+)\s*=/gm)) add('dependency', m[1], `${rel}: ${m[1]}`);
   }
 }
 
-function parsePubspec(root: string, add: Add): void {
-  const raw = readIf(root, 'pubspec.yaml');
-  if (!raw) return;
+function parsePubspec(raw: string, rel: string, add: Add): void {
   const dep = raw.match(/\ndependencies:\s*\n([\s\S]*?)(\n\w|\n*$)/);
   if (dep) {
     for (const m of dep[1].matchAll(/^\s{2}([a-z0-9_]+):/gm)) {
-      if (m[1] !== 'flutter') add('dependency', m[1], `pubspec.yaml: ${m[1]}`);
+      if (m[1] !== 'flutter') add('dependency', m[1], `${rel}: ${m[1]}`);
     }
   }
 }
 
-function parseComposer(root: string, add: Add): void {
-  const raw = readIf(root, 'composer.json');
-  if (!raw) return;
+function parseComposer(raw: string, rel: string, add: Add): void {
   let pkg: any;
   try { pkg = JSON.parse(raw); } catch { return; }
   for (const section of ['require', 'require-dev']) {
     const deps = pkg[section];
     if (deps && typeof deps === 'object') {
-      for (const name of Object.keys(deps)) if (name !== 'php') add('dependency', name, `composer.json (${section}): ${name}`);
+      for (const name of Object.keys(deps)) if (name !== 'php') add('dependency', name, `${rel} (${section}): ${name}`);
     }
   }
 }
 
-function parseGemfile(root: string, add: Add): void {
-  const raw = readIf(root, 'Gemfile');
-  if (!raw) return;
-  for (const m of raw.matchAll(/^\s*gem\s+["']([^"']+)["']/gm)) add('dependency', m[1], `Gemfile: ${m[1]}`);
+function parseGemfile(raw: string, rel: string, add: Add): void {
+  for (const m of raw.matchAll(/^\s*gem\s+["']([^"']+)["']/gm)) add('dependency', m[1], `${rel}: ${m[1]}`);
 }
 
-function parsePomXml(root: string, add: Add): void {
-  const raw = readIf(root, 'pom.xml');
-  if (!raw) return;
-  for (const m of raw.matchAll(/<artifactId>([^<]+)<\/artifactId>/g)) add('dependency', m[1], `pom.xml: ${m[1]}`);
+function parsePomXml(raw: string, rel: string, add: Add): void {
+  for (const m of raw.matchAll(/<artifactId>([^<]+)<\/artifactId>/g)) add('dependency', m[1], `${rel}: ${m[1]}`);
 }
 
-function parseGradle(root: string, add: Add): void {
-  const raw = readIf(root, 'build.gradle') ?? readIf(root, 'build.gradle.kts');
-  if (!raw) return;
+function parseGradle(raw: string, rel: string, add: Add): void {
   for (const m of raw.matchAll(/(?:implementation|api|compile|testImplementation)[\s(]+["']([^"':]+:[^"':]+)/g)) {
-    add('dependency', m[1], `build.gradle: ${m[1]}`);
+    add('dependency', m[1], `${rel}: ${m[1]}`);
   }
 }
 
-function parseCsproj(root: string, add: Add): void {
-  for (const file of shallowFind(root, (n) => n.endsWith('.csproj'), 2)) {
-    const raw = readIf(root, file.slice(root.length + 1));
-    if (!raw) continue;
-    for (const m of raw.matchAll(/<PackageReference\s+Include="([^"]+)"/g)) {
-      add('dependency', m[1], `${file.slice(root.length + 1)}: ${m[1]}`);
-    }
+function parseCsproj(raw: string, rel: string, add: Add): void {
+  for (const m of raw.matchAll(/<PackageReference\s+Include="([^"]+)"/g)) {
+    add('dependency', m[1], `${rel}: ${m[1]}`);
   }
 }
 
@@ -199,38 +199,43 @@ const INFRA_FILES: Array<{ match: RegExp; tool: string }> = [
   { match: /^serverless\.ya?ml$/, tool: 'Serverless Framework' },
 ];
 
-function detectInfra(root: string, add: Add): void {
-  let entries: string[] = [];
-  try { entries = readdirSync(root); } catch { return; }
-  for (const name of entries) {
-    for (const rule of INFRA_FILES) {
-      if (rule.match.test(name)) add('tool', rule.tool, name);
-    }
+function detectInfra(name: string, rel: string, add: Add): void {
+  for (const rule of INFRA_FILES) {
+    if (rule.match.test(name)) add('tool', rule.tool, rel);
   }
-  // CI providers
-  if (existsSync(join(root, '.github', 'workflows'))) add('tool', 'GitHub Actions', '.github/workflows/');
-  if (existsSync(join(root, '.gitlab-ci.yml'))) add('tool', 'GitLab CI', '.gitlab-ci.yml');
-  if (existsSync(join(root, '.circleci'))) add('tool', 'CircleCI', '.circleci/');
-  // Kubernetes manifests directory heuristic
-  for (const d of ['k8s', 'kubernetes', 'deploy', 'charts']) {
-    if (existsSync(join(root, d))) add('tool', 'Kubernetes', `${d}/`);
-  }
+  if (name === '.gitlab-ci.yml') add('tool', 'GitLab CI', rel);
 }
 
-/** Depth-limited filename search (avoids a full project walk). */
-function shallowFind(root: string, pred: (name: string) => boolean, maxDepth: number): string[] {
+const INFRA_DIRS: Array<{ name: string; tool: string }> = [
+  { name: '.circleci', tool: 'CircleCI' },
+  { name: 'k8s', tool: 'Kubernetes' },
+  { name: 'kubernetes', tool: 'Kubernetes' },
+  { name: 'charts', tool: 'Kubernetes' },
+];
+
+/**
+ * Collect manifest + infra files anywhere in the tree (depth-limited). Emits
+ * directory-based tooling signals (GitHub Actions, CircleCI, k8s) via `add`
+ * as it descends. Returns file paths for the caller to route by basename.
+ */
+function walkManifests(root: string, add: Add): string[] {
   const out: string[] = [];
   const walk = (dir: string, depth: number) => {
-    if (depth > maxDepth) return;
+    if (depth > MAX_DEPTH) return;
     let entries: string[];
     try { entries = readdirSync(dir); } catch { return; }
+    if (entries.includes('.github') && existsSync(join(dir, '.github', 'workflows'))) {
+      add('tool', 'GitHub Actions', `${relative(root, dir) || '.'}/.github/workflows/`);
+    }
     for (const name of entries) {
-      if (name === 'node_modules' || name === '.git' || name === 'dist' || name === '.codegps') continue;
+      const infra = INFRA_DIRS.find((d) => d.name === name);
+      if (infra) add('tool', infra.tool, `${relative(root, join(dir, name))}/`);
+      if (SKIP_DIRS.has(name)) continue;
       const abs = join(dir, name);
       let st;
       try { st = statSync(abs); } catch { continue; }
       if (st.isDirectory()) walk(abs, depth + 1);
-      else if (pred(name)) out.push(abs);
+      else out.push(abs);
     }
   };
   walk(root, 0);
