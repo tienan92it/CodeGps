@@ -12,6 +12,7 @@ import { registerTriage } from './triage.js';
 import { registerVerify } from './verify.js';
 import { registerEnrich } from './enrich.js';
 import { registerProfile } from './profile.js';
+import { registerClean } from './clean.js';
 
 const program = new Command();
 
@@ -32,6 +33,7 @@ registerTriage(program);
 registerVerify(program);
 registerEnrich(program);
 registerProfile(program);
+registerClean(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err?.stack ?? err);
